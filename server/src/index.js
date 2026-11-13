@@ -117,7 +117,7 @@ app.put('/api/me/settings', { preHandler: auth }, async (req, reply) => {
     out.hotkeys = {};
     for (const k of ['mute', 'deafen']) {
       const v = b.hotkeys?.[k];
-      if (v === '' || (typeof v === 'string' && v.length <= 40 && /^[A-Za-z0-9+]+$/.test(v))) out.hotkeys[k] = v;
+      if (v === '' || (typeof v === 'string' && v.length <= 40 && /^[\x21-\x7e]+$/.test(v))) out.hotkeys[k] = v;
     }
   }
   if ('volumes' in b) {

@@ -1837,7 +1837,33 @@ function VolumeMenu(props: {
   )
 }
 
-/** Converte uma tecla pressionada no formato de atalho do Electron (ex.: Ctrl+Shift+M). Null = incompleto. */
+/** Tecla física (KeyboardEvent.code) -> nome no formato de atalho do Electron. */
+const KEY_NAMES: Record<string, string> = {
+  Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']', Backslash: '\\', Semicolon: ';', Quote: "'",
+  Comma: ',', Period: '.', Slash: '/', Backquote: '`',
+  Space: 'Space', Tab: 'Tab', Enter: 'Enter', NumpadEnter: 'Enter', Backspace: 'Backspace', Delete: 'Delete', Insert: 'Insert',
+  Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown',
+  ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
+  CapsLock: 'Capslock', NumLock: 'Numlock', ScrollLock: 'Scrolllock', PrintScreen: 'PrintScreen',
+  NumpadDecimal: 'numdec', NumpadComma: 'numdec', NumpadAdd: 'numadd', NumpadSubtract: 'numsub', NumpadMultiply: 'nummult', NumpadDivide: 'numdiv',
+  AudioVolumeUp: 'VolumeUp', AudioVolumeDown: 'VolumeDown', AudioVolumeMute: 'VolumeMute',
+  MediaTrackNext: 'MediaNextTrack', MediaTrackPrevious: 'MediaPreviousTrack', MediaStop: 'MediaStop', MediaPlayPause: 'MediaPlayPause',
+}
+/** Nome para mostrar na tela. */
+const KEY_LABELS: Record<string, string> = {
+  Plus: '+', Space: 'Espaço', Enter: 'Enter', Backspace: 'Backspace', Delete: 'Delete', Up: '↑', Down: '↓', Left: '←', Right: '→',
+  Capslock: 'Caps Lock', Numlock: 'Num Lock', Scrolllock: 'Scroll Lock', PrintScreen: 'Print Screen', ';': 'Ç', Super: 'Win',
+  numdec: 'Num ,', numadd: 'Num +', numsub: 'Num -', nummult: 'Num *', numdiv: 'Num /',
+  VolumeUp: 'Volume +', VolumeDown: 'Volume -', VolumeMute: 'Mudo (mídia)',
+  MediaNextTrack: 'Próxima faixa', MediaPreviousTrack: 'Faixa anterior', MediaStop: 'Parar mídia', MediaPlayPause: 'Tocar/pausar',
+}
+const hotkeyLabel = (acc: string) =>
+  acc
+    .split('+')
+    .map((k) => KEY_LABELS[k] ?? (k.startsWith('num') && k.length === 4 ? `Num ${k[3]}` : k))
+    .join(' + ')
+
+/** Converte a tecla pressionada no formato de atalho do Electron (ex.: Ctrl+Shift+M, =, num5). Null = tecla sem suporte. */
 function comboFromEvent(e: KeyboardEvent): string | null {
   const code = e.code
   let key = ''
@@ -1845,34 +1871,29 @@ function comboFromEvent(e: KeyboardEvent): string | null {
   else if (/^Digit\d$/.test(code)) key = code.slice(5)
   else if (/^F([1-9]|1\d|2[0-4])$/.test(code)) key = code
   else if (/^Numpad\d$/.test(code)) key = 'num' + code.slice(6)
-  else {
-    const named: Record<string, string> = {
-      Space: 'Space', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right', Home: 'Home', End: 'End',
-      PageUp: 'PageUp', PageDown: 'PageDown', Insert: 'Insert', Delete: 'Delete',
-      Pause: 'Pause', ScrollLock: 'Scrolllock', NumpadAdd: 'numadd', NumpadSubtract: 'numsub', NumpadMultiply: 'nummult', NumpadDivide: 'numdiv',
-    }
-    key = named[code] ?? ''
-  }
+  else key = KEY_NAMES[code] ?? ''
   if (!key) return null
   const mods = [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Super'].filter(Boolean) as string[]
-  // sem modificador só teclas que não atrapalham digitar (F1–F24, teclado numérico, Pause...)
-  if (mods.length === 0 && !/^(F\d+|num.*|Pause|Scrolllock|Insert)$/.test(key)) return null
   return [...mods, key].join('+')
 }
+const isModifierCode = (code: string) => /^(Control|Shift|Alt|Meta|OS)(Left|Right)?$/.test(code)
 
 function HotkeyField(props: { label: string; value: string; failed: boolean; onChange: (v: string) => void }) {
   const [recording, setRecording] = useState(false)
+  const [unsupported, setUnsupported] = useState(false)
   useEffect(() => {
     if (!recording) return
     const onKey = (e: KeyboardEvent) => {
       e.preventDefault()
       e.stopPropagation()
       if (e.key === 'Escape') return setRecording(false)
+      if (isModifierCode(e.code)) return // espera a tecla principal
       const combo = comboFromEvent(e)
       if (combo) {
+        setUnsupported(false)
         props.onChange(combo)
         setRecording(false)
-      }
+      } else setUnsupported(true)
     }
     addEventListener('keydown', onKey, true)
     return () => removeEventListener('keydown', onKey, true)
@@ -1881,14 +1902,20 @@ function HotkeyField(props: { label: string; value: string; failed: boolean; onC
     <div className="hotkey">
       <span>{props.label}</span>
       <button type="button" className={`hotkey-key ${recording ? 'rec' : ''}`} onClick={() => setRecording(!recording)}>
-        {recording ? 'Pressione as teclas…' : props.value ? props.value.replace(/\+/g, ' + ') : 'Nenhum'}
+        {recording ? 'Pressione as teclas…' : props.value ? hotkeyLabel(props.value) : 'Nenhum'}
       </button>
       {props.value && !recording && (
         <button type="button" className="link" title="Remover atalho" onClick={() => props.onChange('')}>
           remover
         </button>
       )}
+      {recording && unsupported && <span className="error small">Essa tecla não pode ser usada como atalho. Tente outra (Esc cancela).</span>}
       {props.failed && props.value && <span className="error small">Outro programa já usa esse atalho. Escolha outro.</span>}
+      {!recording && props.value && !props.value.includes('+') && !/^(F\d+|num|Volume|Media)/.test(props.value) && (
+        <span className="muted small hotkey-warn">
+          Tecla sozinha: enquanto o CGL estiver aberto, ela fica reservada para o atalho e não digita "{hotkeyLabel(props.value)}" em outros programas.
+        </span>
+      )}
     </div>
   )
 }

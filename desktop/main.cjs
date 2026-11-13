@@ -333,13 +333,22 @@ ipcMain.handle('tunnel:stop', (e) => {
 })
 // Atalhos globais (funcionam com o app minimizado ou dentro de um jogo).
 const HOTKEY_NAMES = ['mute', 'deafen']
+const HOTKEY_MODS = new Set(['Ctrl', 'Alt', 'Shift', 'Super'])
+const HOTKEY_KEY = /^([A-Z0-9]|F([1-9]|1\d|2[0-4])|num[0-9]|num(dec|add|sub|mult|div)|Plus|Space|Tab|Enter|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Up|Down|Left|Right|Capslock|Numlock|Scrolllock|PrintScreen|VolumeUp|VolumeDown|VolumeMute|MediaNextTrack|MediaPreviousTrack|MediaStop|MediaPlayPause|[-=\[\]\\;',./`])$/
+/** "Ctrl+Shift+=" -> válido se tiver zero ou mais modificadores e exatamente uma tecla conhecida no fim. */
+function validHotkey(acc) {
+  if (typeof acc !== 'string' || !acc || acc.length > 40) return false
+  const parts = acc.split('+')
+  const key = parts.pop()
+  return HOTKEY_KEY.test(key) && parts.every((m) => HOTKEY_MODS.has(m)) && new Set(parts).size === parts.length
+}
 ipcMain.handle('hotkeys:set', (e, map) => {
   if (!fromRoom(e)) return { failed: [] }
   globalShortcut.unregisterAll()
   const failed = []
   for (const name of HOTKEY_NAMES) {
     const acc = map?.[name]
-    if (typeof acc !== 'string' || !acc || acc.length > 40 || !/^[A-Za-z0-9+]+$/.test(acc)) continue
+    if (!validHotkey(acc)) continue
     let ok = false
     try {
       ok = globalShortcut.register(acc, () => room?.webContents.send('hotkey', name))

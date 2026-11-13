@@ -279,3 +279,5 @@ button:active:not(:disabled) { transform: scale(.97); }
 .check input { width: auto; }
 .sound-settings .line { display: flex; gap: 8px; }
 .sound-settings select { flex: 1; }
+
+.hotkey .hotkey-warn { flex-basis: 100%; }
