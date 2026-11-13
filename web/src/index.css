@@ -265,3 +265,17 @@ button:active:not(:disabled) { transform: scale(.97); }
 .viewer-nav.prev { left: 16px; }
 .viewer-nav.next { right: 16px; }
 .viewer-nav:active:not(:disabled) { transform: translateY(-50%) scale(.97); }
+
+/* atalhos e sons */
+.modal.audio-settings { max-height: calc(100vh - 40px); overflow-y: auto; }
+.settings-sub { margin: 8px 0 0; font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); font-weight: 500; }
+.hotkey { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 14px; }
+.hotkey > span:first-child { flex: 1; min-width: 160px; }
+.hotkey-key { min-width: 150px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+.hotkey-key.rec { border-color: var(--accent); color: var(--accent); }
+.hotkey .error { flex-basis: 100%; }
+.sound-settings { display: grid; gap: 10px; }
+.check { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 14px; grid-auto-flow: column; }
+.check input { width: auto; }
+.sound-settings .line { display: flex; gap: 8px; }
+.sound-settings select { flex: 1; }

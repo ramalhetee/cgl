@@ -2,7 +2,7 @@
 // - "Hospedar": sobe o servidor embutido neste PC (dados na pasta do usuário).
 // - "Entrar": abre uma ponte local (127.0.0.1) até o servidor de outra pessoa. A interface sempre
 //   roda em localhost, então microfone, câmera e tela funcionam sem HTTPS.
-const { app, BrowserWindow, desktopCapturer, ipcMain, session, shell, Menu } = require('electron')
+const { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, session, shell, Menu } = require('electron')
 const http = require('node:http')
 const https = require('node:https')
 const os = require('node:os')
@@ -266,6 +266,7 @@ async function openRoom(url, label, isHost) {
   win.on('closed', () => {
     if (room === win) {
       room = null
+      globalShortcut.unregisterAll()
       bridge?.close()
       bridge?.closeAllConnections?.()
       bridge = null
@@ -330,6 +331,26 @@ ipcMain.handle('tunnel:start', async (e) => {
 ipcMain.handle('tunnel:stop', (e) => {
   if (fromRoom(e) && current?.hosting) stopTunnel()
 })
+// Atalhos globais (funcionam com o app minimizado ou dentro de um jogo).
+const HOTKEY_NAMES = ['mute', 'deafen']
+ipcMain.handle('hotkeys:set', (e, map) => {
+  if (!fromRoom(e)) return { failed: [] }
+  globalShortcut.unregisterAll()
+  const failed = []
+  for (const name of HOTKEY_NAMES) {
+    const acc = map?.[name]
+    if (typeof acc !== 'string' || !acc || acc.length > 40 || !/^[A-Za-z0-9+]+$/.test(acc)) continue
+    let ok = false
+    try {
+      ok = globalShortcut.register(acc, () => room?.webContents.send('hotkey', name))
+    } catch {
+      ok = false
+    }
+    if (!ok) failed.push(name) // combinação inválida ou já usada por outro programa
+  }
+  return { failed }
+})
+
 ipcMain.handle('room:leave', (e) => {
   if (fromRoom(e)) room.close()
 })
@@ -346,6 +367,7 @@ ipcMain.handle('picker:choose', (e, id, audio) => {
 let quitting = false
 app.on('before-quit', () => (quitting = true))
 app.on('quit', stopTunnel)
+app.on('will-quit', () => globalShortcut.unregisterAll())
 if (!app.requestSingleInstanceLock()) app.quit()
 else {
   app.on('second-instance', () => (room ?? launcher)?.focus())

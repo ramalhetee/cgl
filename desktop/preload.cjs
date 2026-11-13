@@ -8,6 +8,12 @@ contextBridge.exposeInMainWorld('taverna', {
   tunnelStart: () => ipcRenderer.invoke('tunnel:start'),
   tunnelStop: () => ipcRenderer.invoke('tunnel:stop'),
   onTunnelClosed: (fn) => ipcRenderer.on('tunnel:closed', () => fn()),
+  setHotkeys: (map) => ipcRenderer.invoke('hotkeys:set', map),
+  onHotkey: (fn) => {
+    const h = (_e, name) => fn(name)
+    ipcRenderer.on('hotkey', h)
+    return () => ipcRenderer.removeListener('hotkey', h)
+  },
   // tela inicial
   state: () => ipcRenderer.invoke('launcher:state'),
   host: () => ipcRenderer.invoke('launcher:host'),

@@ -109,6 +109,17 @@ app.put('/api/me/settings', { preHandler: auth }, async (req, reply) => {
   const out = {};
   if ('input' in b) out.input = cleanDevice(b.input);
   if ('output' in b) out.output = cleanDevice(b.output);
+  if ('sounds' in b) {
+    const v = b.sounds || {};
+    out.sounds = { enabled: v.enabled !== false, volume: Math.round(Math.max(0, Math.min(100, Number(v.volume) || 0))) };
+  }
+  if ('hotkeys' in b) {
+    out.hotkeys = {};
+    for (const k of ['mute', 'deafen']) {
+      const v = b.hotkeys?.[k];
+      if (v === '' || (typeof v === 'string' && v.length <= 40 && /^[A-Za-z0-9+]+$/.test(v))) out.hotkeys[k] = v;
+    }
+  }
   if ('volumes' in b) {
     if (!b.volumes || typeof b.volumes !== 'object') return fail(reply, 400, 'Volumes inválidos');
     out.volumes = {};

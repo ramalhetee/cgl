@@ -7,6 +7,8 @@ import type { Attachment, Channel, Dm, Guild, Message, Reaction, User, VoicePeer
 import { VoiceSession } from './voice'
 import { AudioMixer, resolveDevice } from './audio'
 import type { Volumes } from './audio'
+import { CUE_NAMES, playCue } from './sounds'
+import type { Cue } from './sounds'
 import type { VoiceSnapshot } from './voice'
 
 type DesktopInfo = { hosting: boolean; label: string; addresses: string[]; tunnel: string | null }
@@ -14,6 +16,8 @@ const desktop = (window as unknown as {
   taverna?: {
     info: () => Promise<DesktopInfo | null>
     leave: () => Promise<void>
+    setHotkeys?: (map: Hotkeys) => Promise<{ failed: string[] }>
+    onHotkey?: (fn: (name: string) => void) => () => void
     tunnelStart: () => Promise<{ url?: string; error?: string }>
     tunnelStop: () => Promise<void>
     onTunnelClosed: (fn: () => void) => void
@@ -43,7 +47,16 @@ function Icon({ name, off, size = 20 }: { name: keyof typeof ICONS; off?: boolea
 }
 
 type DeviceRef = { id: string; label: string }
-type AudioSettings = { input?: DeviceRef | null; output?: DeviceRef | null; volumes?: Volumes }
+type Hotkeys = { mute?: string; deafen?: string }
+type AudioSettings = {
+  input?: DeviceRef | null
+  output?: DeviceRef | null
+  volumes?: Volumes
+  sounds?: { enabled: boolean; volume: number }
+  hotkeys?: Hotkeys
+}
+const DEFAULT_HOTKEYS: Required<Hotkeys> = { mute: 'Ctrl+Shift+M', deafen: 'Ctrl+Shift+D' }
+const DEFAULT_SOUNDS = { enabled: true, volume: 50 }
 type VolMenu = { user: User; peer: VoicePeer | null; x: number; y: number }
 
 const EMOJIS = ['👍', '❤️', '😂', '🎉', '😮', '😢']
@@ -129,6 +142,8 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [audioOpen, setAudioOpen] = useState(false)
   const [volMenu, setVolMenu] = useState<VolMenu | null>(null)
   const mixer = useRef<AudioMixer | null>(null)
+  const outputId = useRef('')
+  const [hotkeyFailed, setHotkeyFailed] = useState<string[]>([])
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingSave = useRef<AudioSettings>({})
   /** Muda as preferências na hora e grava na conta logo depois (agrupa mudanças do controle deslizante). */
@@ -326,6 +341,63 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
       .enumerateDevices()
       .then((list) => mixer.current?.setOutput(resolveDevice(outputSaved, list.filter((d) => d.kind === 'audiooutput'))))
   }, [outputSaved, voice?.channelId])
+  useEffect(() => {
+    void navigator.mediaDevices
+      .enumerateDevices()
+      .then((list) => (outputId.current = resolveDevice(outputSaved, list.filter((d) => d.kind === 'audiooutput'))))
+  }, [outputSaved])
+
+  // ---------- sons da chamada ----------
+  const sounds = settings.sounds ?? DEFAULT_SOUNDS
+  const soundsRef = useRef(sounds)
+  soundsRef.current = sounds
+  const cue = useCallback((c: Cue) => {
+    if (soundsRef.current.enabled) void playCue(c, soundsRef.current.volume, outputId.current)
+  }, [])
+  const prevVoice = useRef<VoiceSnapshot | null>(null)
+  useEffect(() => {
+    const p = prevVoice.current
+    const v = voice
+    prevVoice.current = v
+    if (!v) return
+    if (!p || p.channelId !== v.channelId) return cue('join')
+    if (p.deafened !== v.deafened) cue(v.deafened ? 'deafen' : 'undeafen')
+    else if (p.muted !== v.muted) cue(v.muted ? 'mute' : 'unmute')
+    if (p.screen !== v.screen) cue(v.screen ? 'screenOn' : 'screenOff')
+    const before = new Map(p.remotes.map((r) => [r.info.socketId, r.info]))
+    const now = new Set(v.remotes.map((r) => r.info.socketId))
+    if (v.remotes.some((r) => !before.has(r.info.socketId))) cue('peerJoin')
+    else if (p.remotes.some((r) => !now.has(r.info.socketId))) cue('peerLeave')
+    else if (v.remotes.some((r) => r.info.screen && before.get(r.info.socketId)?.screen === false)) cue('screenOn')
+  }, [voice, cue])
+
+  // ---------- atalhos ----------
+  const hotkeys = { ...DEFAULT_HOTKEYS, ...settings.hotkeys }
+  const hotkeyKey = `${hotkeys.mute}|${hotkeys.deafen}`
+  const hotkeyAction = useRef<(name: string) => void>(() => {})
+  hotkeyAction.current = (name) => {
+    const s = session.current
+    if (!s) return flash('Entre numa sala de voz para usar o atalho')
+    if (name === 'mute') {
+      if (!voice?.micOk) return flash('Nenhum microfone encontrado')
+      s.toggleMute()
+    } else if (name === 'deafen') s.toggleDeafen()
+  }
+  useEffect(() => {
+    const [mute, deafen] = hotkeyKey.split('|')
+    if (desktop?.setHotkeys) {
+      void desktop.setHotkeys({ mute, deafen }).then((r) => setHotkeyFailed(r?.failed ?? []))
+      return desktop.onHotkey?.((name) => hotkeyAction.current(name))
+    }
+    // fora do app desktop: atalho só com a janela em foco
+    const onKey = (e: KeyboardEvent) => {
+      const combo = comboFromEvent(e)
+      if (combo && combo === mute) hotkeyAction.current('mute')
+      else if (combo && combo === deafen) hotkeyAction.current('deafen')
+    }
+    addEventListener('keydown', onKey)
+    return () => removeEventListener('keydown', onKey)
+  }, [hotkeyKey])
   const inputSaved = settings.input
   const firstInput = useRef(true)
   useEffect(() => {
@@ -378,6 +450,9 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
   }, [guildId])
 
   const leaveVoice = useCallback(() => {
+    if (session.current && (settingsRef.current.sounds ?? DEFAULT_SOUNDS).enabled) {
+      void playCue('leave', (settingsRef.current.sounds ?? DEFAULT_SOUNDS).volume, outputId.current)
+    }
     session.current?.leave()
     session.current = null
     setVoice(null)
@@ -724,7 +799,9 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
       )}
 
       {/* áudio remoto fica sempre montado, mesmo fora da tela da chamada */}
-      {audioOpen && <AudioSettingsModal settings={settings} onChange={updateSettings} onClose={() => setAudioOpen(false)} />}
+      {audioOpen && (
+        <AudioSettingsModal settings={settings} onChange={updateSettings} onClose={() => setAudioOpen(false)} hotkeyFailed={hotkeyFailed} global={!!desktop?.setHotkeys} />
+      )}
       {volMenu && (
         <VolumeMenu
           menu={volMenu}
@@ -1436,7 +1513,7 @@ function VoiceButtons({ voice, media, onLeave, onSettings }: { voice: VoiceSnaps
       <button
         className={micOff ? 'warn' : ''}
         disabled={!voice.micOk}
-        title={!voice.micOk ? 'Nenhum microfone encontrado' : voice.muted ? 'Ativar microfone' : 'Silenciar microfone'}
+        title={!voice.micOk ? 'Nenhum microfone encontrado' : `${voice.muted ? 'Ativar microfone' : 'Silenciar microfone'} (atalho nos ajustes de voz)`}
         aria-label={voice.muted ? 'Ativar microfone' : 'Silenciar microfone'}
         onClick={media((s) => s.toggleMute())}
       >
@@ -1444,7 +1521,7 @@ function VoiceButtons({ voice, media, onLeave, onSettings }: { voice: VoiceSnaps
       </button>
       <button
         className={voice.deafened ? 'warn' : ''}
-        title={voice.deafened ? 'Voltar a ouvir' : 'Parar de ouvir'}
+        title={`${voice.deafened ? 'Voltar a ouvir' : 'Parar de ouvir'} (atalho nos ajustes de voz)`}
         aria-label={voice.deafened ? 'Voltar a ouvir' : 'Parar de ouvir'}
         onClick={media((s) => s.toggleDeafen())}
       >
@@ -1760,8 +1837,100 @@ function VolumeMenu(props: {
   )
 }
 
+/** Converte uma tecla pressionada no formato de atalho do Electron (ex.: Ctrl+Shift+M). Null = incompleto. */
+function comboFromEvent(e: KeyboardEvent): string | null {
+  const code = e.code
+  let key = ''
+  if (/^Key[A-Z]$/.test(code)) key = code.slice(3)
+  else if (/^Digit\d$/.test(code)) key = code.slice(5)
+  else if (/^F([1-9]|1\d|2[0-4])$/.test(code)) key = code
+  else if (/^Numpad\d$/.test(code)) key = 'num' + code.slice(6)
+  else {
+    const named: Record<string, string> = {
+      Space: 'Space', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right', Home: 'Home', End: 'End',
+      PageUp: 'PageUp', PageDown: 'PageDown', Insert: 'Insert', Delete: 'Delete',
+      Pause: 'Pause', ScrollLock: 'Scrolllock', NumpadAdd: 'numadd', NumpadSubtract: 'numsub', NumpadMultiply: 'nummult', NumpadDivide: 'numdiv',
+    }
+    key = named[code] ?? ''
+  }
+  if (!key) return null
+  const mods = [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Super'].filter(Boolean) as string[]
+  // sem modificador só teclas que não atrapalham digitar (F1–F24, teclado numérico, Pause...)
+  if (mods.length === 0 && !/^(F\d+|num.*|Pause|Scrolllock|Insert)$/.test(key)) return null
+  return [...mods, key].join('+')
+}
+
+function HotkeyField(props: { label: string; value: string; failed: boolean; onChange: (v: string) => void }) {
+  const [recording, setRecording] = useState(false)
+  useEffect(() => {
+    if (!recording) return
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      if (e.key === 'Escape') return setRecording(false)
+      const combo = comboFromEvent(e)
+      if (combo) {
+        props.onChange(combo)
+        setRecording(false)
+      }
+    }
+    addEventListener('keydown', onKey, true)
+    return () => removeEventListener('keydown', onKey, true)
+  }, [recording, props])
+  return (
+    <div className="hotkey">
+      <span>{props.label}</span>
+      <button type="button" className={`hotkey-key ${recording ? 'rec' : ''}`} onClick={() => setRecording(!recording)}>
+        {recording ? 'Pressione as teclas…' : props.value ? props.value.replace(/\+/g, ' + ') : 'Nenhum'}
+      </button>
+      {props.value && !recording && (
+        <button type="button" className="link" title="Remover atalho" onClick={() => props.onChange('')}>
+          remover
+        </button>
+      )}
+      {props.failed && props.value && <span className="error small">Outro programa já usa esse atalho. Escolha outro.</span>}
+    </div>
+  )
+}
+
+function SoundSettings(props: { value: { enabled: boolean; volume: number }; output: string; onChange: (v: { enabled: boolean; volume: number }) => void }) {
+  const { value } = props
+  const [sample, setSample] = useState<Cue>('join')
+  return (
+    <div className="sound-settings">
+      <label className="check">
+        <input type="checkbox" checked={value.enabled} onChange={(e) => props.onChange({ ...value, enabled: e.target.checked })} />
+        Tocar sons ao entrar, sair, mutar e compartilhar a tela
+      </label>
+      {value.enabled && (
+        <>
+          <VolumeSlider label="Volume dos sons" value={value.volume} onChange={(v) => props.onChange({ ...value, volume: Math.min(100, v) })} />
+          <div className="line">
+            <select value={sample} onChange={(e) => setSample(e.target.value as Cue)}>
+              {(Object.keys(CUE_NAMES) as Cue[]).map((c) => (
+                <option key={c} value={c}>
+                  {CUE_NAMES[c]}
+                </option>
+              ))}
+            </select>
+            <button type="button" onClick={() => void playCue(sample, value.volume, props.output)}>
+              Ouvir
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 /** Microfone e saída de áudio, salvos na conta. */
-function AudioSettingsModal(props: { settings: AudioSettings; onChange: (p: AudioSettings) => void; onClose: () => void }) {
+function AudioSettingsModal(props: {
+  settings: AudioSettings
+  onChange: (p: AudioSettings) => void
+  onClose: () => void
+  hotkeyFailed: string[]
+  global: boolean
+}) {
   const [inputs, setInputs] = useState<MediaDeviceInfo[]>([])
   const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([])
   const [level, setLevel] = useState(0)
@@ -1874,8 +2043,32 @@ function AudioSettingsModal(props: { settings: AudioSettings; onChange: (p: Audi
         <button type="button" disabled={testing} onClick={() => void testOutput()}>
           {testing ? 'Tocando…' : 'Testar saída'}
         </button>
+        <h4 className="settings-sub">Atalhos</h4>
+        <HotkeyField
+          label="Mutar / desmutar microfone"
+          value={props.settings.hotkeys?.mute ?? DEFAULT_HOTKEYS.mute}
+          failed={props.hotkeyFailed.includes('mute')}
+          onChange={(v) => props.onChange({ hotkeys: { ...props.settings.hotkeys, mute: v } })}
+        />
+        <HotkeyField
+          label="Parar / voltar a ouvir"
+          value={props.settings.hotkeys?.deafen ?? DEFAULT_HOTKEYS.deafen}
+          failed={props.hotkeyFailed.includes('deafen')}
+          onChange={(v) => props.onChange({ hotkeys: { ...props.settings.hotkeys, deafen: v } })}
+        />
         <p className="muted small">
-          Fica salvo na sua conta, junto com o volume de cada pessoa (clique com o botão direito em alguém na sala de voz).
+          {props.global
+            ? 'Funcionam mesmo com o CGL minimizado ou dentro de um jogo.'
+            : 'Neste navegador, os atalhos só funcionam com a janela do CGL em foco.'}
+        </p>
+        <h4 className="settings-sub">Sons</h4>
+        <SoundSettings
+          value={props.settings.sounds ?? DEFAULT_SOUNDS}
+          output={outputId}
+          onChange={(v) => props.onChange({ sounds: v })}
+        />
+        <p className="muted small">
+          Tudo aqui fica salvo na sua conta, junto com o volume de cada pessoa (clique com o botão direito em alguém na sala de voz).
         </p>
         <div className="modal-actions">
           <button className="primary" onClick={props.onClose}>

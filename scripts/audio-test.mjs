@@ -104,6 +104,8 @@ try {
   await evaluate(host, joinRoom)
   await sleep(5000)
   console.log('depois de recarregar e entrar de novo:', await evaluate(host, gains))
+  await sleep(6000)
+  console.log('11 s depois:', await evaluate(host, gains))
   console.log('ids:', JSON.stringify({ hostId, guestId }))
 } catch (e) {
   console.log('FALHOU:', e.message)
