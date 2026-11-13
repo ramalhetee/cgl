@@ -243,3 +243,25 @@ button:active:not(:disabled) { transform: scale(.97); }
 .meter { height: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
 .meter i { display: block; height: 100%; background: var(--ok); transition: width .06s linear; }
 .small { font-size: 12px; margin: 0; }
+
+/* imagem ampliada dentro do app */
+.att-open { display: block; padding: 0; margin-top: 6px; background: none; border: none; border-radius: 10px; cursor: zoom-in; }
+.att-open .att { margin-top: 0; }
+.att-open:hover { border: none; }
+.att-open:active:not(:disabled) { transform: none; }
+.viewer { position: fixed; inset: 0; z-index: 30; background: #000d; display: grid; place-items: center; overflow: hidden; animation: fade .12s ease-out; }
+.viewer-img { max-width: 92vw; max-height: calc(100vh - 120px); object-fit: contain; border-radius: 6px; user-select: none; transition: transform .12s ease-out; cursor: zoom-in; box-shadow: 0 10px 40px #000a; animation: pop .16s ease-out; }
+.viewer-img.zoomed { cursor: grab; transition: none; }
+.viewer-img.zoomed:active { cursor: grabbing; }
+.viewer-bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 18px; background: linear-gradient(transparent, #000c); flex-wrap: wrap; }
+.viewer-info { display: grid; gap: 2px; min-width: 0; }
+.viewer-info b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.viewer-info .muted { font-size: 12px; }
+.viewer-actions { display: flex; align-items: center; gap: 6px; }
+.viewer-actions button, .viewer-actions .btn { background: #0008; border: 1px solid #fff3; color: #fff; border-radius: 8px; padding: 6px 12px; font-size: 13px; text-decoration: none; }
+.viewer-actions .btn:hover, .viewer-actions button:hover:not(:disabled) { border-color: var(--accent); }
+.viewer-zoom { min-width: 48px; text-align: center; font-size: 13px; font-variant-numeric: tabular-nums; }
+.viewer-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 64px; font-size: 34px; line-height: 1; background: #0008; border: 1px solid #fff3; color: #fff; border-radius: 10px; }
+.viewer-nav.prev { left: 16px; }
+.viewer-nav.next { right: 16px; }
+.viewer-nav:active:not(:disabled) { transform: translateY(-50%) scale(.97); }

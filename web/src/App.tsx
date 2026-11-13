@@ -1105,6 +1105,10 @@ function Chat(props: {
   const [editing, setEditing] = useState<{ id: number; text: string } | null>(null)
   const [noMore, setNoMore] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
+  const [viewing, setViewing] = useState<string | null>(null) // url da imagem aberta
+  const images = (messages ?? []).flatMap((m) =>
+    m.attachment?.mime.startsWith('image/') ? [{ url: m.attachment.url, name: m.attachment.name, author: nameOf(m.author), at: m.createdAt }] : [],
+  )
   const fileInput = useRef<HTMLInputElement>(null)
   const lastTyping = useRef(0)
   const lastId = messages?.[messages.length - 1]?.id
@@ -1214,7 +1218,7 @@ function Chat(props: {
                     </p>
                   )
                 )}
-                {m.attachment && <AttachmentView a={m.attachment} />}
+                {m.attachment && <AttachmentView a={m.attachment} onOpen={setViewing} />}
                 {m.reactions.length > 0 && (
                   <div className="reactions">
                     {m.reactions.map((r) => (
@@ -1288,16 +1292,24 @@ function Chat(props: {
           Enviar
         </button>
       </div>
+      {viewing && (
+        <ImageViewer
+          images={images}
+          index={Math.max(0, images.findIndex((i) => i.url === viewing))}
+          onIndex={(i) => setViewing(images[i]?.url ?? null)}
+          onClose={() => setViewing(null)}
+        />
+      )}
     </div>
   )
 }
 
-function AttachmentView({ a }: { a: Attachment }) {
+function AttachmentView({ a, onOpen }: { a: Attachment; onOpen: (url: string) => void }) {
   if (a.mime.startsWith('image/'))
     return (
-      <a href={a.url} target="_blank" rel="noreferrer">
+      <button className="att-open" title="Ampliar" onClick={() => onOpen(a.url)}>
         <img className="att" src={a.url} alt={a.name} loading="lazy" />
-      </a>
+      </button>
     )
   if (a.mime.startsWith('video/')) return <video className="att" src={a.url} controls />
   if (a.mime.startsWith('audio/')) return <audio src={a.url} controls />
@@ -1305,6 +1317,112 @@ function AttachmentView({ a }: { a: Attachment }) {
     <a className="file" href={a.url} download={a.name}>
       📄 {a.name} <span className="muted">({Math.max(1, Math.round(a.size / 1024))} KB)</span>
     </a>
+  )
+}
+
+type ViewerImage = { url: string; name: string; author: string; at: number }
+const VIEW_MAX_ZOOM = 6
+
+/** Imagem ampliada dentro do app: roda do mouse ou duplo clique aproxima, arrastar move, setas trocam de imagem. */
+function ImageViewer(props: { images: ViewerImage[]; index: number; onIndex: (i: number) => void; onClose: () => void }) {
+  const { images, index } = props
+  const img = images[index]
+  const [zoom, setZoom] = useState(1)
+  const [pos, setPos] = useState({ x: 0, y: 0 })
+  const drag = useRef<{ px: number; py: number; x: number; y: number; moved: boolean } | null>(null)
+  const reset = () => {
+    setZoom(1)
+    setPos({ x: 0, y: 0 })
+  }
+  useEffect(reset, [index])
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') props.onClose()
+      else if (e.key === 'ArrowLeft' && index > 0) props.onIndex(index - 1)
+      else if (e.key === 'ArrowRight' && index < images.length - 1) props.onIndex(index + 1)
+    }
+    addEventListener('keydown', key)
+    return () => removeEventListener('keydown', key)
+  }, [props, index, images.length])
+  if (!img) return null
+
+  // aproxima mantendo parado o ponto sob o mouse (coordenadas relativas ao centro da tela)
+  const zoomAt = (next: number, cx = 0, cy = 0) => {
+    const z = Math.min(VIEW_MAX_ZOOM, Math.max(1, next))
+    if (z === 1) return reset()
+    const k = z / zoom
+    setPos({ x: cx - (cx - pos.x) * k, y: cy - (cy - pos.y) * k })
+    setZoom(z)
+  }
+  const fromCenter = (e: { clientX: number; clientY: number }) => [e.clientX - innerWidth / 2, e.clientY - innerHeight / 2] as const
+
+  return (
+    <div
+      className="viewer"
+      role="dialog"
+      aria-label={img.name}
+      onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}
+      onWheel={(e) => zoomAt(zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), ...fromCenter(e))}
+    >
+      <img
+        className={`viewer-img ${zoom > 1 ? 'zoomed' : ''}`}
+        src={img.url}
+        alt={img.name}
+        draggable={false}
+        style={{ transform: `translate(${pos.x}px, ${pos.y}px) scale(${zoom})` }}
+        onDoubleClick={(e) => (zoom > 1 ? reset() : zoomAt(2.5, ...fromCenter(e)))}
+        onPointerDown={(e) => {
+          if (zoom === 1) return
+          e.currentTarget.setPointerCapture(e.pointerId)
+          drag.current = { px: e.clientX, py: e.clientY, x: pos.x, y: pos.y, moved: false }
+        }}
+        onPointerMove={(e) => {
+          const d = drag.current
+          if (!d) return
+          d.moved = true
+          setPos({ x: d.x + e.clientX - d.px, y: d.y + e.clientY - d.py })
+        }}
+        onPointerUp={() => (drag.current = null)}
+        onPointerCancel={() => (drag.current = null)}
+      />
+      {index > 0 && (
+        <button className="viewer-nav prev" aria-label="Imagem anterior" onClick={() => props.onIndex(index - 1)}>
+          ‹
+        </button>
+      )}
+      {index < images.length - 1 && (
+        <button className="viewer-nav next" aria-label="Próxima imagem" onClick={() => props.onIndex(index + 1)}>
+          ›
+        </button>
+      )}
+      <div className="viewer-bar">
+        <span className="viewer-info">
+          <b>{img.name}</b>
+          <span className="muted">
+            {img.author} · {new Date(img.at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+            {images.length > 1 && ` · ${index + 1} de ${images.length}`}
+          </span>
+        </span>
+        <span className="viewer-actions">
+          <button title="Afastar" aria-label="Afastar" disabled={zoom === 1} onClick={() => zoomAt(zoom / 1.5)}>
+            −
+          </button>
+          <span className="viewer-zoom">{Math.round(zoom * 100)}%</span>
+          <button title="Aproximar" aria-label="Aproximar" disabled={zoom >= VIEW_MAX_ZOOM} onClick={() => zoomAt(zoom * 1.5)}>
+            +
+          </button>
+          <a className="btn" href={img.url} download={img.name}>
+            Baixar
+          </a>
+          <a className="btn" href={img.url} target="_blank" rel="noreferrer">
+            Abrir no navegador
+          </a>
+          <button title="Fechar (Esc)" aria-label="Fechar" onClick={props.onClose}>
+            ✕
+          </button>
+        </span>
+      </div>
+    </div>
   )
 }
 
