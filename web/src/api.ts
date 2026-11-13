@@ -31,6 +31,7 @@ export type VoicePeer = {
   deaf?: boolean
   video: boolean
   screen: boolean
+  screenAudio?: boolean
   cameraStream?: string | null
   screenStream?: string | null
 }

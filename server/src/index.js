@@ -86,9 +86,46 @@ app.post('/api/login', async (req, reply) => {
 
 app.get('/api/me', { preHandler: auth }, async (req) => ({
   user: { ...d.publicUser(req.user), bio: req.user.bio ?? null },
+  settings: readSettings(req.user),
   guilds: d.guildsOf(req.user.id),
   dms: d.dmsOf(req.user.id),
 }));
+
+// ---------- preferências de áudio (ficam na conta) ----------
+function readSettings(user) {
+  try {
+    return JSON.parse(user.settings || '{}');
+  } catch {
+    return {};
+  }
+}
+const cleanDevice = (v) =>
+  v && typeof v === 'object' && typeof v.id === 'string' && typeof v.label === 'string'
+    ? { id: v.id.slice(0, 200), label: v.label.slice(0, 200) }
+    : null;
+
+app.put('/api/me/settings', { preHandler: auth }, async (req, reply) => {
+  const b = req.body || {};
+  const out = {};
+  if ('input' in b) out.input = cleanDevice(b.input);
+  if ('output' in b) out.output = cleanDevice(b.output);
+  if ('volumes' in b) {
+    if (!b.volumes || typeof b.volumes !== 'object') return fail(reply, 400, 'Volumes inválidos');
+    out.volumes = {};
+    for (const [uid, v] of Object.entries(b.volumes).slice(0, 1000)) {
+      if (!/^\d{1,10}$/.test(uid) || !v || typeof v !== 'object') continue;
+      const one = {};
+      for (const k of ['voice', 'screen']) {
+        const n = Number(v[k]);
+        if (Number.isFinite(n)) one[k] = Math.round(Math.max(0, Math.min(200, n)));
+      }
+      if (Object.keys(one).length) out.volumes[uid] = one;
+    }
+  }
+  const merged = { ...readSettings(req.user), ...out };
+  d.updateUser(req.user.id, { settings: JSON.stringify(merged) });
+  return merged;
+});
 
 // ---------- perfil ----------
 app.patch('/api/me', { preHandler: auth }, async (req, reply) => {
@@ -296,7 +333,7 @@ io.on('connection', (socket) => {
     leaveVoice(socket);
     const peers = voiceList(ch.id);
     if (!voice.has(ch.id)) voice.set(ch.id, new Map());
-    const state = { user: me, muted: false, deaf: false, video: false, screen: false };
+    const state = { user: me, muted: false, deaf: false, video: false, screen: false, screenAudio: false };
     voice.get(ch.id).set(socket.id, state);
     socket.data.voiceChannel = ch.id;
     socket.to(`voice:${ch.id}`).emit('voice:peer-joined', { socketId: socket.id, ...state });
@@ -317,7 +354,7 @@ io.on('connection', (socket) => {
     const channelId = socket.data.voiceChannel;
     const state = voice.get(channelId)?.get(socket.id);
     if (!state) return;
-    for (const k of ['muted', 'deaf', 'video', 'screen']) if (typeof patch[k] === 'boolean') state[k] = patch[k];
+    for (const k of ['muted', 'deaf', 'video', 'screen', 'screenAudio']) if (typeof patch[k] === 'boolean') state[k] = patch[k];
     // ids dos streams, pra quem recebe saber qual faixa é câmera e qual é tela
     for (const k of ['cameraStream', 'screenStream']) {
       if (typeof patch[k] === 'string' || patch[k] === null) state[k] = patch[k]?.slice(0, 80) ?? null;

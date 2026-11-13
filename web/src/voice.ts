@@ -19,6 +19,7 @@ export type VoiceSnapshot = {
   deafened: boolean
   video: boolean
   screen: boolean
+  screenAudio: boolean
   micOk: boolean
   mic: MediaStream | null
   camera: MediaStream | null
@@ -43,22 +44,57 @@ export class VoiceSession {
   private stopMonitor: (() => void) | null = null
   private socket: Socket
   private onChange: (s: VoiceSnapshot) => void
+  private inputId: string
   readonly channelId: number
 
-  constructor(socket: Socket, channelId: number, onChange: (s: VoiceSnapshot) => void) {
+  constructor(socket: Socket, channelId: number, onChange: (s: VoiceSnapshot) => void, inputId = '') {
     this.socket = socket
     this.channelId = channelId
     this.onChange = onChange
+    this.inputId = inputId
+  }
+
+  private async openMic(id: string): Promise<MediaStream | null> {
+    const base = { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    if (id) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({ audio: { ...base, deviceId: { exact: id } } })
+      } catch {
+        // o microfone salvo não está ligado: cai no padrão
+      }
+    }
+    try {
+      return await navigator.mediaDevices.getUserMedia({ audio: base })
+    } catch {
+      return null // sem microfone: entra só ouvindo
+    }
+  }
+
+  /** Troca o microfone no meio da chamada, sem renegociar: só substitui a faixa enviada. */
+  async setInputDevice(id: string) {
+    this.inputId = id
+    if (this.closed) return
+    const next = await this.openMic(id)
+    if (!next || this.closed) return next?.getTracks().forEach((t) => t.stop())
+    const old = this.mic
+    const oldTrack = old?.getAudioTracks()[0]
+    const newTrack = next.getAudioTracks()[0]
+    newTrack.enabled = !this.muted
+    for (const l of this.links.values()) {
+      const sender = l.pc.getSenders().find((x) => x.track && x.track === oldTrack)
+      if (sender) await sender.replaceTrack(newTrack)
+      else l.pc.addTrack(newTrack, next)
+    }
+    this.mic = next
+    old?.getTracks().forEach((t) => t.stop())
+    this.stopMonitor?.()
+    this.monitorMic()
+    this.sendState()
+    this.emit()
   }
 
   async join(): Promise<void> {
-    try {
-      this.mic = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      })
-    } catch {
-      this.mic = null // sem microfone: entra só ouvindo
-    }
+    this.mic = await this.openMic(this.inputId)
     if (this.closed) return this.stopLocal()
     this.socket.on('voice:peer-joined', this.onPeerJoined)
     this.socket.on('voice:peer-left', this.onPeerLeft)
@@ -129,7 +165,11 @@ export class VoiceSession {
       this.dropStream(this.display)
       this.display = null
     } else {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 60, max: 60 } }, audio: true })
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: { ideal: 60, max: 60 } },
+        // som do PC sem o som da própria chamada (onde o sistema permite), pra ninguém ouvir eco de si mesmo
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, restrictOwnAudio: true, suppressLocalAudioPlayback: false } as MediaTrackConstraints,
+      })
       this.display = stream
       // prioriza movimento suave (jogos, vídeo) em vez de nitidez parada
       for (const t of stream.getVideoTracks()) t.contentHint = 'motion'
@@ -210,6 +250,7 @@ export class VoiceSession {
       deaf: this.deafened,
       video: !!this.camera,
       screen: !!this.display,
+      screenAudio: !!this.display?.getAudioTracks().length,
       cameraStream: this.camera?.id ?? null,
       screenStream: this.display?.id ?? null,
     })
@@ -315,6 +356,7 @@ export class VoiceSession {
       deafened: this.deafened,
       video: !!this.camera,
       screen: !!this.display,
+      screenAudio: !!this.display?.getAudioTracks().length,
       micOk: !!this.mic,
       mic: this.mic,
       camera: this.camera,

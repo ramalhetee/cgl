@@ -30,7 +30,7 @@
     <h3>Janelas</h3><div class="grid" id="windows"></div>
   </main>
   <footer>
-    <label><input type="checkbox" id="audio" disabled /> Incluir o som do PC (só tela inteira; pode dar eco na chamada)</label>
+    <label><input type="checkbox" id="audio" disabled /> Incluir o som do PC (só na tela inteira)</label>
     <button class="act" id="cancel">Cancelar</button>
     <button class="act primary" id="share" disabled>Compartilhar</button>
   </footer>
@@ -48,12 +48,14 @@
         b.classList.add('on'); chosen = s
         $('share').disabled = false
         $('audio').disabled = !s.screen
-        if (!s.screen) $('audio').checked = false
+        // som vem marcado (ou como a pessoa deixou da última vez); janela sozinha não leva som
+        $('audio').checked = s.screen && localStorage.getItem('cgl.screenAudio') !== '0'
       }
       b.ondblclick = () => window.taverna.choose(s.id, $('audio').checked)
       $(s.screen ? 'screens' : 'windows').append(b)
     }
   })
+  $('audio').onchange = () => localStorage.setItem('cgl.screenAudio', $('audio').checked ? '1' : '0')
   $('share').onclick = () => chosen && window.taverna.choose(chosen.id, $('audio').checked)
   $('cancel').onclick = () => window.close()
   addEventListener('keydown', (e) => e.key === 'Escape' && window.close())

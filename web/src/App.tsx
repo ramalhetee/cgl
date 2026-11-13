@@ -5,6 +5,8 @@ import type { Socket } from 'socket.io-client'
 import { api, getToken, nameOf, setToken, upload } from './api'
 import type { Attachment, Channel, Dm, Guild, Message, Reaction, User, VoicePeer } from './api'
 import { VoiceSession } from './voice'
+import { AudioMixer, resolveDevice } from './audio'
+import type { Volumes } from './audio'
 import type { VoiceSnapshot } from './voice'
 
 type DesktopInfo = { hosting: boolean; label: string; addresses: string[]; tunnel: string | null }
@@ -25,6 +27,8 @@ const ICONS = {
   tela: <><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></>,
   cheia: <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />,
   reduzir: <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />,
+  som: <><path d="M4 9v6h4l5 4V5L8 9H4z" /><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" /></>,
+  ajustes: <><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" /></>,
   sair: <path d="M3 14c5-5.3 13-5.3 18 0l-2.4 2.6-3.6-2v-2.4c-2-.7-4-.7-6 0v2.4l-3.6 2z" fill="currentColor" stroke="none" />,
 }
 
@@ -37,6 +41,10 @@ function Icon({ name, off, size = 20 }: { name: keyof typeof ICONS; off?: boolea
     </svg>
   )
 }
+
+type DeviceRef = { id: string; label: string }
+type AudioSettings = { input?: DeviceRef | null; output?: DeviceRef | null; volumes?: Volumes }
+type VolMenu = { user: User; peer: VoicePeer | null; x: number; y: number }
 
 const EMOJIS = ['👍', '❤️', '😂', '🎉', '😮', '😢']
 type Sel = { kind: 'guild'; guildId: number; channelId: number | null } | { kind: 'dm'; channelId: number | null }
@@ -116,6 +124,32 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [talking, setTalking] = useState<Set<string>>(new Set())
   const [editProfile, setEditProfile] = useState(false)
   const [card, setCard] = useState<User | null>(null)
+  const [settings, setSettings] = useState<AudioSettings>({})
+  const settingsRef = useRef<AudioSettings>({})
+  const [audioOpen, setAudioOpen] = useState(false)
+  const [volMenu, setVolMenu] = useState<VolMenu | null>(null)
+  const mixer = useRef<AudioMixer | null>(null)
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingSave = useRef<AudioSettings>({})
+  /** Muda as preferências na hora e grava na conta logo depois (agrupa mudanças do controle deslizante). */
+  const updateSettings = useCallback((patch: AudioSettings) => {
+    settingsRef.current = { ...settingsRef.current, ...patch }
+    setSettings(settingsRef.current)
+    pendingSave.current = { ...pendingSave.current, ...patch }
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => {
+      const body = pendingSave.current
+      pendingSave.current = {}
+      void api('/me/settings', body, 'PUT').catch(() => {})
+    }, 400)
+  }, [])
+  const setVolume = useCallback(
+    (userId: number, kind: 'voice' | 'screen', pct: number) => {
+      const all = settingsRef.current.volumes ?? {}
+      updateSettings({ volumes: { ...all, [userId]: { ...all[userId], [kind]: pct } } })
+    },
+    [updateSettings],
+  )
   const [ask, setAsk] = useState<Ask | null>(null)
   const [notice, setNotice] = useState('')
   const [socket, setSocket] = useState<Socket | null>(null)
@@ -165,9 +199,11 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
   // carga inicial + socket
   useEffect(() => {
     let alive = true
-    api<{ user: User; guilds: Guild[]; dms: Dm[] }>('/me')
+    api<{ user: User; guilds: Guild[]; dms: Dm[]; settings?: AudioSettings }>('/me')
       .then((r) => {
         if (!alive) return
+        settingsRef.current = r.settings ?? {}
+        setSettings(settingsRef.current)
         setMe(r.user)
         meRef.current = r.user
         setGuilds(r.guilds)
@@ -253,9 +289,56 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
       alive = false
       session.current?.leave()
       session.current = null
+      mixer.current?.close()
+      mixer.current = null
       s.close()
     }
   }, [token, onLogout])
+
+  // ---------- saída de áudio da chamada ----------
+  useEffect(() => {
+    if (!voice) return
+    mixer.current ??= new AudioMixer()
+    const list = voice.remotes.flatMap((r) =>
+      r.streams.map((st) => ({
+        key: r.info.socketId + ':' + st.id,
+        stream: st,
+        userId: r.info.user.id,
+        kind: (st.id === r.info.screenStream ? 'screen' : 'voice') as 'voice' | 'screen',
+      })),
+    )
+    mixer.current.sync(list)
+    mixer.current.setDeafened(voice.deafened)
+  }, [voice])
+  useEffect(() => {
+    if (!voice && mixer.current) {
+      mixer.current.close()
+      mixer.current = null
+    }
+  }, [voice])
+  useEffect(() => {
+    mixer.current?.setVolumes(settings.volumes ?? {})
+  }, [settings.volumes, voice])
+  const outputSaved = settings.output
+  useEffect(() => {
+    if (!mixer.current) return
+    void navigator.mediaDevices
+      .enumerateDevices()
+      .then((list) => mixer.current?.setOutput(resolveDevice(outputSaved, list.filter((d) => d.kind === 'audiooutput'))))
+  }, [outputSaved, voice?.channelId])
+  const inputSaved = settings.input
+  const firstInput = useRef(true)
+  useEffect(() => {
+    // troca de microfone no meio da chamada
+    if (firstInput.current) {
+      firstInput.current = false
+      return
+    }
+    if (!session.current) return
+    void navigator.mediaDevices.enumerateDevices().then((list) => {
+      void session.current?.setInputDevice(resolveDevice(inputSaved, list.filter((d) => d.kind === 'audioinput')))
+    })
+  }, [inputSaved])
 
   // "digitando" some depois de 3 s
   useEffect(() => {
@@ -305,7 +388,9 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
       if (!socket) return
       if (session.current?.channelId === channelId) return
       leaveVoice()
-      const s = new VoiceSession(socket, channelId, setVoice)
+      const devices = await navigator.mediaDevices.enumerateDevices().catch(() => [] as MediaDeviceInfo[])
+      const inputId = resolveDevice(settingsRef.current.input, devices.filter((d) => d.kind === 'audioinput'))
+      const s = new VoiceSession(socket, channelId, setVoice, inputId)
       session.current = s
       try {
         await s.join()
@@ -418,6 +503,9 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
           </button>
         </nav>
         <span className="who">
+          <button className="icon-btn" title="Voz e áudio" aria-label="Voz e áudio" onClick={() => setAudioOpen(true)}>
+            <Icon name="ajustes" size={18} />
+          </button>
           <button className="me-chip" title="Editar perfil" onClick={() => setEditProfile(true)}>
             <Avatar user={me} small online />
             {nameOf(me)}
@@ -511,13 +599,27 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
                       {c.name}
                     </button>
                     {(occupancy[c.id] ?? []).map((p) => (
-                      <div key={p.socketId} className="occupant">
+                      <div
+                        key={p.socketId}
+                        className={`occupant ${p.user.id !== me.id ? 'clicky-row' : ''}`}
+                        title={p.user.id !== me.id ? 'Clique com o botão direito para ajustar o volume' : undefined}
+                        onContextMenu={(e) => {
+                          if (p.user.id === me.id) return
+                          e.preventDefault()
+                          setVolMenu({ user: p.user, peer: p, x: e.clientX, y: e.clientY })
+                        }}
+                      >
                         <Avatar user={p.user} small talking={talking.has(p.socketId) && !p.muted} />
                         {nameOf(p.user)}
                         <span className="flags">
                           {p.screen && <span title="Compartilhando a tela"><Icon name="tela" size={14} /></span>}
                           {p.muted && <span title="Microfone mudo"><Icon name="mic" off size={14} /></span>}
                           {p.deaf && <span title="Sem ouvir"><Icon name="fone" off size={14} /></span>}
+                          {p.user.id !== me.id && (settings.volumes?.[p.user.id]?.voice ?? 100) !== 100 && (
+                            <span title={`Volume: ${settings.volumes?.[p.user.id]?.voice}%`}>
+                              <Icon name="som" size={14} />
+                            </span>
+                          )}
                         </span>
                       </div>
                     ))}
@@ -554,14 +656,22 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
               <span className="live" /> Em chamada
               <div className="muted">{voiceChannelName}</div>
             </div>
-            <VoiceButtons voice={voice} media={media} onLeave={leaveVoice} />
+            <VoiceButtons voice={voice} media={media} onLeave={leaveVoice} onSettings={() => setAudioOpen(true)} />
           </div>
         )}
       </aside>
 
       <main className="content">
         {showStage && voice ? (
-          <Stage voice={voice} me={me} title={channel?.name ?? (dm ? nameOf(dm.user) : '')} media={media} onLeave={leaveVoice} />
+          <Stage
+            voice={voice}
+            me={me}
+            title={channel?.name ?? (dm ? nameOf(dm.user) : '')}
+            media={media}
+            onLeave={leaveVoice}
+            onSettings={() => setAudioOpen(true)}
+            onVolume={(user, peer, x, y) => setVolMenu({ user, peer, x, y })}
+          />
         ) : channel?.type === 'voice' ? (
           <div className="empty">
             <h2>{channel.name}</h2>
@@ -614,7 +724,16 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
       )}
 
       {/* áudio remoto fica sempre montado, mesmo fora da tela da chamada */}
-      {voice?.remotes.flatMap((r) => r.streams.map((s) => <AudioSink key={r.info.socketId + s.id} stream={s} muted={voice.deafened} />))}
+      {audioOpen && <AudioSettingsModal settings={settings} onChange={updateSettings} onClose={() => setAudioOpen(false)} />}
+      {volMenu && (
+        <VolumeMenu
+          menu={volMenu}
+          peer={(volMenu.peer && voice?.remotes.find((r) => r.info.socketId === volMenu.peer!.socketId)?.info) || volMenu.peer}
+          volumes={settings.volumes?.[volMenu.user.id]}
+          onChange={(kind, pct) => setVolume(volMenu.user.id, kind, pct)}
+          onClose={() => setVolMenu(null)}
+        />
+      )}
       {ask && <AskModal ask={ask} onClose={() => setAsk(null)} />}
       {editProfile && (
         <ProfileEditor
@@ -1192,7 +1311,7 @@ function AttachmentView({ a }: { a: Attachment }) {
 // ---------------- voz / vídeo / tela ----------------
 type MediaFn = (fn: (s: VoiceSession) => void | Promise<void>) => () => Promise<void>
 
-function VoiceButtons({ voice, media, onLeave }: { voice: VoiceSnapshot; media: MediaFn; onLeave: () => void }) {
+function VoiceButtons({ voice, media, onLeave, onSettings }: { voice: VoiceSnapshot; media: MediaFn; onLeave: () => void; onSettings: () => void }) {
   const micOff = voice.muted || !voice.micOk
   return (
     <div className="voice-buttons">
@@ -1229,6 +1348,9 @@ function VoiceButtons({ voice, media, onLeave }: { voice: VoiceSnapshot; media: 
       >
         <Icon name="tela" />
       </button>
+      <button title="Voz e áudio: microfone, saída e volumes" aria-label="Voz e áudio" onClick={onSettings}>
+        <Icon name="ajustes" />
+      </button>
       <button className="danger" title="Sair da chamada" aria-label="Sair da chamada" onClick={onLeave}>
         <Icon name="sair" />
       </button>
@@ -1236,27 +1358,42 @@ function VoiceButtons({ voice, media, onLeave }: { voice: VoiceSnapshot; media: 
   )
 }
 
-function Stage(props: { voice: VoiceSnapshot; me: User; title: string; media: MediaFn; onLeave: () => void }) {
+function Stage(props: {
+  voice: VoiceSnapshot
+  me: User
+  title: string
+  media: MediaFn
+  onLeave: () => void
+  onSettings: () => void
+  onVolume: (user: User, peer: VoicePeer, x: number, y: number) => void
+}) {
   const { voice, me } = props
   const [focus, setFocus] = useState<string | null>(null)
   // A prévia da própria tela fica desligada por padrão: mostrar a tela dentro dela mesma cria um
   // espelho infinito, e cada volta pelo codificador de vídeo distorce mais as cores.
   const [ownPreview, setOwnPreview] = useState(false)
-  const tiles: { key: string; user: User; stream: MediaStream | null; voice?: MediaStream | null; label: string; screen?: boolean; own?: boolean; muted?: boolean; deaf?: boolean }[] = []
+  const tiles: { key: string; user: User; stream: MediaStream | null; voice?: MediaStream | null; label: string; screen?: boolean; own?: boolean; muted?: boolean; deaf?: boolean; peer?: VoicePeer }[] = []
   tiles.push({ key: 'me', user: me, stream: voice.camera, voice: voice.muted ? null : voice.mic, label: `${nameOf(me)} (você)`, muted: voice.muted || !voice.micOk, deaf: voice.deafened })
   if (voice.screenStream) tiles.push({ key: 'me-screen', user: me, stream: ownPreview ? voice.screenStream : null, label: 'Sua tela', screen: true, own: true })
   for (const r of voice.remotes) {
     const cam = r.info.video ? r.streams.find((s) => s.id === r.info.cameraStream) ?? null : null
     const scr = r.info.screen ? r.streams.find((s) => s.id === r.info.screenStream) ?? null : null
     const mic = r.streams.find((s) => s.id !== r.info.screenStream && s.getAudioTracks().length > 0) ?? null
-    tiles.push({ key: r.info.socketId, user: r.info.user, stream: cam, voice: r.info.muted ? null : mic, label: nameOf(r.info.user), muted: r.info.muted, deaf: r.info.deaf })
-    if (scr) tiles.push({ key: r.info.socketId + '-screen', user: r.info.user, stream: scr, label: `Tela de ${nameOf(r.info.user)}`, screen: true })
+    tiles.push({ key: r.info.socketId, user: r.info.user, stream: cam, voice: r.info.muted ? null : mic, label: nameOf(r.info.user), muted: r.info.muted, deaf: r.info.deaf, peer: r.info })
+    if (scr) tiles.push({ key: r.info.socketId + '-screen', user: r.info.user, stream: scr, label: `Tela de ${nameOf(r.info.user)}`, screen: true, peer: r.info })
   }
   // tela compartilhada ganha destaque sozinha, a menos que o usuário escolha outro foco
   const focused = tiles.find((t) => t.key === focus) ?? tiles.find((t) => t.screen && !t.own) ?? tiles.find((t) => t.screen) ?? null
   const rest = focused ? tiles.filter((t) => t !== focused) : tiles
   const tile = (t: (typeof tiles)[number], big?: boolean) => (
-    <Tile key={t.key} big={big} noFull={t.own} voice={t.voice ?? null} onClick={() => setFocus(focus === t.key ? null : t.key)}>
+    <Tile
+      key={t.key}
+      big={big}
+      noFull={t.own}
+      voice={t.voice ?? null}
+      onClick={() => setFocus(focus === t.key ? null : t.key)}
+      onVolume={t.peer ? (x, y) => props.onVolume(t.user, t.peer!, x, y) : undefined}
+    >
       {t.own ? (
         <>
           {t.stream && <StreamVideo stream={t.stream} contain />}
@@ -1300,7 +1437,7 @@ function Stage(props: { voice: VoiceSnapshot; me: User; title: string; media: Me
       {focused && <div className="spot">{tile(focused, true)}</div>}
       <div className={`grid ${focused ? 'strip' : ''}`}>{rest.map((t) => tile(t))}</div>
       <div className="stage-bar">
-        <VoiceButtons voice={voice} media={props.media} onLeave={props.onLeave} />
+        <VoiceButtons voice={voice} media={props.media} onLeave={props.onLeave} onSettings={props.onSettings} />
       </div>
     </div>
   )
@@ -1340,7 +1477,14 @@ function useSpeaking(stream: MediaStream | null) {
   return speaking
 }
 
-function Tile(props: { big?: boolean; noFull?: boolean; voice: MediaStream | null; onClick: () => void; children: ReactNode }) {
+function Tile(props: {
+  big?: boolean
+  noFull?: boolean
+  voice: MediaStream | null
+  onClick: () => void
+  onVolume?: (x: number, y: number) => void
+  children: ReactNode
+}) {
   const speaking = useSpeaking(props.voice)
   const box = useRef<HTMLDivElement>(null)
   const [full, setFull] = useState(false)
@@ -1360,8 +1504,31 @@ function Tile(props: { big?: boolean; noFull?: boolean; voice: MediaStream | nul
       className={`tile ${props.big ? 'big' : ''} ${speaking ? 'talking' : ''}`}
       onClick={full ? undefined : props.onClick}
       onDoubleClick={toggleFull}
+      onContextMenu={
+        props.onVolume
+          ? (e) => {
+              e.preventDefault()
+              props.onVolume!(e.clientX, e.clientY)
+            }
+          : undefined
+      }
     >
       {props.children}
+      {props.onVolume && (
+        <button
+          className="tile-vol"
+          title="Volume"
+          aria-label="Volume"
+          onClick={(e) => {
+            e.stopPropagation()
+            const r = e.currentTarget.getBoundingClientRect()
+            props.onVolume!(r.left, r.bottom + 4)
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          <Icon name="som" size={18} />
+        </button>
+      )}
       {!props.noFull && (
         <button
           className="tile-fs"
@@ -1385,17 +1552,219 @@ function StreamVideo({ stream, contain }: { stream: MediaStream; contain?: boole
   useEffect(() => {
     if (ref.current && ref.current.srcObject !== stream) ref.current.srcObject = stream
   }, [stream])
-  // sempre mudo: o som sai pelo AudioSink
+  // sempre mudo: o som sai pelo mixer de áudio
   return <video ref={ref} autoPlay playsInline muted style={{ objectFit: contain ? 'contain' : 'cover' }} />
 }
 
-function AudioSink({ stream, muted }: { stream: MediaStream; muted: boolean }) {
-  const ref = useRef<HTMLAudioElement>(null)
+function VolumeSlider(props: { label: string; value: number; onChange: (v: number) => void; note?: string }) {
+  return (
+    <label className="vol">
+      <span className="vol-head">
+        {props.label}
+        <b>{props.value}%</b>
+      </span>
+      <input
+        type="range"
+        min={0}
+        max={200}
+        step={1}
+        value={props.value}
+        onChange={(e) => props.onChange(Number(e.target.value))}
+        onDoubleClick={() => props.onChange(100)}
+        style={{ '--fill': `${props.value / 2}%` } as React.CSSProperties}
+      />
+      {props.note && <span className="muted vol-note">{props.note}</span>}
+    </label>
+  )
+}
+
+/** Menu de volume de uma pessoa: voz e transmissão separadas, de 0 a 200%, salvos na sua conta. */
+function VolumeMenu(props: {
+  menu: VolMenu
+  peer: VoicePeer | null
+  volumes?: { voice?: number; screen?: number }
+  onChange: (kind: 'voice' | 'screen', pct: number) => void
+  onClose: () => void
+}) {
+  const { menu, peer } = props
+  const box = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState({ left: menu.x, top: menu.y })
   useEffect(() => {
-    if (ref.current && ref.current.srcObject !== stream) ref.current.srcObject = stream
-  }, [stream])
+    const el = box.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    setPos({ left: Math.max(8, Math.min(menu.x, innerWidth - r.width - 8)), top: Math.max(8, Math.min(menu.y, innerHeight - r.height - 8)) })
+  }, [menu.x, menu.y])
   useEffect(() => {
-    if (ref.current) ref.current.muted = muted
-  }, [muted])
-  return <audio ref={ref} autoPlay hidden />
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent ? e.key === 'Escape' : !box.current?.contains(e.target as Node)) props.onClose()
+    }
+    addEventListener('pointerdown', close, true)
+    addEventListener('keydown', close)
+    return () => {
+      removeEventListener('pointerdown', close, true)
+      removeEventListener('keydown', close)
+    }
+  }, [props])
+  const voiceV = props.volumes?.voice ?? 100
+  const screenV = props.volumes?.screen ?? 100
+  return (
+    <div ref={box} className="vol-menu" style={pos} role="dialog" aria-label={`Volume de ${nameOf(menu.user)}`}>
+      <div className="vol-title">
+        <Avatar user={menu.user} small />
+        <strong>{nameOf(menu.user)}</strong>
+      </div>
+      <VolumeSlider label="Volume da voz" value={voiceV} onChange={(v) => props.onChange('voice', v)} />
+      <VolumeSlider
+        label="Volume da transmissão"
+        value={screenV}
+        onChange={(v) => props.onChange('screen', v)}
+        note={
+          peer?.screen && !peer.screenAudio
+            ? 'Esta transmissão está sem som: quem compartilha precisa escolher a tela inteira com "Incluir o som do PC".'
+            : !peer?.screen
+              ? 'Vale quando essa pessoa compartilhar a tela.'
+              : undefined
+        }
+      />
+      <div className="vol-actions">
+        <button
+          className="link"
+          onClick={() => {
+            props.onChange('voice', 100)
+            props.onChange('screen', 100)
+          }}
+        >
+          Voltar para 100%
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** Microfone e saída de áudio, salvos na conta. */
+function AudioSettingsModal(props: { settings: AudioSettings; onChange: (p: AudioSettings) => void; onClose: () => void }) {
+  const [inputs, setInputs] = useState<MediaDeviceInfo[]>([])
+  const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([])
+  const [level, setLevel] = useState(0)
+  const [testing, setTesting] = useState(false)
+  const [error, setError] = useState('')
+  const inputId = resolveDevice(props.settings.input, inputs)
+  const outputId = resolveDevice(props.settings.output, outputs)
+
+  const refresh = useCallback(async () => {
+    const list = await navigator.mediaDevices.enumerateDevices()
+    setInputs(list.filter((d) => d.kind === 'audioinput' && d.deviceId !== 'default' && d.deviceId !== 'communications'))
+    setOutputs(list.filter((d) => d.kind === 'audiooutput' && d.deviceId !== 'default' && d.deviceId !== 'communications'))
+  }, [])
+  useEffect(() => {
+    void refresh()
+    navigator.mediaDevices.addEventListener('devicechange', refresh)
+    return () => navigator.mediaDevices.removeEventListener('devicechange', refresh)
+  }, [refresh])
+
+  // medidor do microfone escolhido (também libera os nomes dos dispositivos)
+  useEffect(() => {
+    let stream: MediaStream | null = null
+    let timer: ReturnType<typeof setInterval> | undefined
+    let ctx: AudioContext | null = null
+    let stop = false
+    void navigator.mediaDevices
+      .getUserMedia({ audio: inputId ? { deviceId: { exact: inputId } } : true })
+      .then((st) => {
+        if (stop) return st.getTracks().forEach((t) => t.stop())
+        stream = st
+        setError('')
+        void refresh()
+        ctx = new AudioContext()
+        const an = ctx.createAnalyser()
+        an.fftSize = 512
+        ctx.createMediaStreamSource(st).connect(an)
+        const buf = new Uint8Array(an.fftSize)
+        timer = setInterval(() => {
+          an.getByteTimeDomainData(buf)
+          let peak = 0
+          for (const v of buf) peak = Math.max(peak, Math.abs(v - 128))
+          setLevel(Math.min(1, peak / 64))
+        }, 60)
+      })
+      .catch(() => setError('Não consegui abrir esse microfone.'))
+    return () => {
+      stop = true
+      clearInterval(timer)
+      stream?.getTracks().forEach((t) => t.stop())
+      void ctx?.close()
+      setLevel(0)
+    }
+  }, [inputId, refresh])
+
+  const testOutput = async () => {
+    setTesting(true)
+    const ctx = new AudioContext() as AudioContext & { setSinkId?: (id: string) => Promise<void> }
+    try {
+      if (outputId && ctx.setSinkId) await ctx.setSinkId(outputId)
+      const osc = ctx.createOscillator()
+      const g = ctx.createGain()
+      osc.frequency.value = 660
+      g.gain.setValueAtTime(0.0001, ctx.currentTime)
+      g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.05)
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.6)
+      osc.connect(g).connect(ctx.destination)
+      osc.start()
+      osc.stop(ctx.currentTime + 0.65)
+      await new Promise((r) => setTimeout(r, 700))
+    } finally {
+      void ctx.close()
+      setTesting(false)
+    }
+  }
+  const pick = (kind: 'input' | 'output', list: MediaDeviceInfo[], id: string) => {
+    const d = list.find((x) => x.deviceId === id)
+    props.onChange({ [kind]: d ? { id: d.deviceId, label: d.label } : null })
+  }
+
+  return (
+    <div className="veil" onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}>
+      <div className="modal audio-settings">
+        <h3>Voz e áudio</h3>
+        <label>
+          Microfone
+          <select value={inputId} onChange={(e) => pick('input', inputs, e.target.value)}>
+            <option value="">Padrão do sistema</option>
+            {inputs.map((d) => (
+              <option key={d.deviceId} value={d.deviceId}>
+                {d.label || 'Microfone sem nome'}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="meter" aria-label="Nível do microfone">
+          <i style={{ width: `${Math.round(level * 100)}%` }} />
+        </div>
+        {error ? <p className="error">{error}</p> : <p className="muted small">Fale algo: a barra deve se mexer.</p>}
+        <label>
+          Saída de áudio
+          <select value={outputId} onChange={(e) => pick('output', outputs, e.target.value)}>
+            <option value="">Padrão do sistema</option>
+            {outputs.map((d) => (
+              <option key={d.deviceId} value={d.deviceId}>
+                {d.label || 'Saída sem nome'}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="button" disabled={testing} onClick={() => void testOutput()}>
+          {testing ? 'Tocando…' : 'Testar saída'}
+        </button>
+        <p className="muted small">
+          Fica salvo na sua conta, junto com o volume de cada pessoa (clique com o botão direito em alguém na sala de voz).
+        </p>
+        <div className="modal-actions">
+          <button className="primary" onClick={props.onClose}>
+            Pronto
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }

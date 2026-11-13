@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS reactions (
 `);
 
 // colunas de perfil, adicionadas depois da primeira versão
-for (const col of ['display_name TEXT', 'avatar TEXT', 'bio TEXT', 'status TEXT']) {
+for (const col of ['display_name TEXT', 'avatar TEXT', 'bio TEXT', 'status TEXT', 'settings TEXT']) {
   try {
     db.exec(`ALTER TABLE users ADD COLUMN ${col}`);
   } catch {
@@ -76,7 +76,7 @@ export const publicUser = (u) => u && {
   id: u.id, username: u.username, color: u.color,
   displayName: u.display_name ?? null, avatar: u.avatar ?? null, status: u.status ?? null,
 };
-const PROFILE_COLUMNS = ['display_name', 'avatar', 'bio', 'status', 'color'];
+const PROFILE_COLUMNS = ['display_name', 'avatar', 'bio', 'status', 'color', 'settings'];
 export function updateUser(id, patch) {
   for (const [col, value] of Object.entries(patch)) {
     if (PROFILE_COLUMNS.includes(col)) q(`UPDATE users SET ${col} = ? WHERE id = ?`).run(value, id);

@@ -220,3 +220,26 @@ button:active:not(:disabled) { transform: scale(.97); }
 .own-screen { display: grid; gap: 10px; justify-items: center; text-align: center; padding: 12px; color: var(--muted); }
 .own-screen strong { color: var(--text); font-weight: 500; }
 .own-screen.over { position: absolute; top: 8px; right: 8px; padding: 0; z-index: 1; }
+
+/* volume por pessoa */
+.icon-btn { display: inline-grid; place-items: center; padding: 6px; background: none; border-color: transparent; }
+.icon-btn:hover { background: var(--raised); }
+.clicky-row { cursor: context-menu; border-radius: 6px; }
+.clicky-row:hover { background: var(--raised); }
+.tile-vol { position: absolute; top: 8px; right: 50px; padding: 6px; background: #000a; border-color: transparent; color: #fff; opacity: 0; z-index: 1; }
+.tile:hover .tile-vol, .tile-vol:focus-visible { opacity: 1; }
+.vol-menu { position: fixed; z-index: 15; width: 280px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: grid; gap: 14px; box-shadow: 0 12px 32px #0008; animation: pop .14s ease-out; }
+.vol-title { display: flex; align-items: center; gap: 8px; }
+.vol { display: grid; gap: 6px; color: var(--text); font-size: 13px; }
+.vol-head { display: flex; justify-content: space-between; color: var(--muted); }
+.vol-head b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.vol input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; padding: 0; border: none; border-radius: 999px; background: linear-gradient(to right, var(--accent) var(--fill), var(--line) var(--fill)); }
+.vol input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; border: 2px solid var(--accent); cursor: pointer; }
+.vol-note { font-size: 12px; line-height: 1.35; }
+.vol-actions { display: flex; justify-content: flex-end; }
+/* ajustes de áudio */
+.audio-settings select { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; width: 100%; }
+.audio-settings > button { justify-self: start; }
+.meter { height: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--ok); transition: width .06s linear; }
+.small { font-size: 12px; margin: 0; }

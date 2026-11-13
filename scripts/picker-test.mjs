@@ -17,8 +17,9 @@ const evaluate = (page, expression) => new Promise((resolve, reject) => {
 try {
   void evaluate(await waitPage('launcher.html'), "document.getElementById('host').click()").catch(() => {})
   const host = await waitPage('localhost:3312'); await sleep(800)
-  void evaluate(host, "navigator.mediaDevices.getDisplayMedia({video:true,audio:true}).then(s=>{window.__s=s.getTracks().map(t=>t.kind+':'+t.readyState).join(',');s.getTracks().forEach(t=>t.stop())},e=>window.__s='erro '+e.name)").catch(() => {})
+  void evaluate(host, "navigator.mediaDevices.getDisplayMedia({video:true,audio:{restrictOwnAudio:true}}).then(s=>{window.__s=s.getTracks().map(t=>t.kind+':'+t.readyState).join(',');s.getTracks().forEach(t=>t.stop())},e=>window.__s='erro '+e.name)").catch(() => {})
   const pk = await waitPage('picker.html'); await sleep(1200)
+  console.log('som do PC marcado ao escolher a tela:', await evaluate(pk, "document.querySelector('#screens .item').click(); document.getElementById('audio').checked"), '| janela desmarca:', await evaluate(pk, "document.querySelector('#windows .item')?.click(); !document.getElementById('audio').checked && document.getElementById('audio').disabled"))
   console.log('seletor:', await evaluate(pk, "document.querySelectorAll('#screens .item').length+' tela(s), '+document.querySelectorAll('#windows .item').length+' janela(s)'"))
   void evaluate(pk, "document.querySelector('#screens .item').click();document.getElementById('share').click()").catch(() => {})
   await sleep(2000)
