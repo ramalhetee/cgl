@@ -8,6 +8,8 @@ import { VoiceSession } from './voice'
 import { AudioMixer, resolveDevice } from './audio'
 import type { Volumes } from './audio'
 import { CUE_NAMES, playCue } from './sounds'
+import { THEMES, applyTheme } from './themes'
+import type { ThemeChoice, ThemeId } from './themes'
 import type { Cue } from './sounds'
 import type { VoiceSnapshot } from './voice'
 
@@ -17,6 +19,9 @@ const desktop = (window as unknown as {
     info: () => Promise<DesktopInfo | null>
     leave: () => Promise<void>
     setHotkeys?: (map: Hotkeys) => Promise<{ failed: string[] }>
+    updateState?: () => Promise<UpdateState | null>
+    updateApply?: () => Promise<boolean>
+    onUpdate?: (fn: (s: UpdateState) => void) => () => void
     onHotkey?: (fn: (name: string) => void) => () => void
     tunnelStart: () => Promise<{ url?: string; error?: string }>
     tunnelStop: () => Promise<void>
@@ -46,6 +51,7 @@ function Icon({ name, off, size = 20 }: { name: keyof typeof ICONS; off?: boolea
   )
 }
 
+type UpdateState = { status: string; current: string; latest?: string; progress?: number; error?: string | null }
 type DeviceRef = { id: string; label: string }
 type Hotkeys = { mute?: string; deafen?: string }
 type AudioSettings = {
@@ -54,6 +60,7 @@ type AudioSettings = {
   volumes?: Volumes
   sounds?: { enabled: boolean; volume: number }
   hotkeys?: Hotkeys
+  theme?: ThemeChoice
 }
 const DEFAULT_HOTKEYS: Required<Hotkeys> = { mute: 'Ctrl+Shift+M', deafen: 'Ctrl+Shift+D' }
 const DEFAULT_SOUNDS = { enabled: true, volume: 50 }
@@ -158,6 +165,11 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
       void api('/me/settings', body, 'PUT').catch(() => {})
     }, 400)
   }, [])
+  const themeKey = JSON.stringify(settings.theme ?? null)
+  useEffect(() => {
+    if (settings.theme) applyTheme(settings.theme)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [themeKey])
   const setVolume = useCallback(
     (userId: number, kind: 'voice' | 'screen', pct: number) => {
       const all = settingsRef.current.volumes ?? {}
@@ -171,6 +183,11 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
   const session = useRef<VoiceSession | null>(null)
   const [desk, setDesk] = useState<DesktopInfo | null>(null)
   const [tunnelBusy, setTunnelBusy] = useState(false)
+  const [update, setUpdate] = useState<UpdateState | null>(null)
+  useEffect(() => {
+    void desktop?.updateState?.().then(setUpdate)
+    return desktop?.onUpdate?.(setUpdate)
+  }, [])
   useEffect(() => {
     void desktop?.info().then(setDesk)
     desktop?.onTunnelClosed(() => setDesk((d) => d && { ...d, tunnel: null }))
@@ -219,6 +236,7 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
         if (!alive) return
         settingsRef.current = r.settings ?? {}
         setSettings(settingsRef.current)
+        if (r.settings?.theme) applyTheme(r.settings.theme)
         setMe(r.user)
         meRef.current = r.user
         setGuilds(r.guilds)
@@ -578,7 +596,19 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
           </button>
         </nav>
         <span className="who">
-          <button className="icon-btn" title="Voz e áudio" aria-label="Voz e áudio" onClick={() => setAudioOpen(true)}>
+          {update?.status === 'ready' && (
+            <button
+              className="chip update-chip"
+              title={`Versão ${update.latest} baixada e conferida`}
+              onClick={() => {
+                if (voice && !confirm('Atualizar agora fecha o CGL e tira você da chamada. Continuar?')) return
+                void desktop?.updateApply?.()
+              }}
+            >
+              Atualizar para {update.latest}
+            </button>
+          )}
+          <button className="icon-btn" title="Ajustes: voz, atalhos, sons e aparência" aria-label="Ajustes" onClick={() => setAudioOpen(true)}>
             <Icon name="ajustes" size={18} />
           </button>
           <button className="me-chip" title="Editar perfil" onClick={() => setEditProfile(true)}>
@@ -1289,10 +1319,15 @@ function Chat(props: {
                   />
                 ) : (
                   m.content && (
-                    <p>
-                      {m.content}
-                      {m.editedAt && <small className="muted"> (editada)</small>}
-                    </p>
+                    <>
+                      <p>
+                        <Linkified text={m.content} />
+                        {m.editedAt && <small className="muted"> (editada)</small>}
+                      </p>
+                      {findLinks(m.content).map((u) => (
+                        <LinkPreview key={u} url={u} />
+                      ))}
+                    </>
                   )
                 )}
                 {m.attachment && <AttachmentView a={m.attachment} onOpen={setViewing} />}
@@ -1394,6 +1429,102 @@ function AttachmentView({ a, onOpen }: { a: Attachment; onOpen: (url: string) =>
     <a className="file" href={a.url} download={a.name}>
       📄 {a.name} <span className="muted">({Math.max(1, Math.round(a.size / 1024))} KB)</span>
     </a>
+  )
+}
+
+// ---------------- links ----------------
+const LINK_RE = /\bhttps?:\/\/[^\s<>"']+/gi
+/** Tira pontuação do fim que normalmente não faz parte do link ("veja isso: https://x.com/a)." ) */
+function trimLink(u: string) {
+  let out = u.replace(/[.,;:!?…]+$/, '')
+  while (out.endsWith(')') && (out.match(/\(/g)?.length ?? 0) < (out.match(/\)/g)?.length ?? 0)) out = out.slice(0, -1)
+  return out
+}
+/** Até 3 links diferentes de uma mensagem, para as prévias. */
+function findLinks(text: string) {
+  return [...new Set((text.match(LINK_RE) ?? []).map(trimLink))].slice(0, 3)
+}
+
+/** Texto com os links clicáveis (abrem no navegador). */
+function Linkified({ text }: { text: string }) {
+  const parts: ReactNode[] = []
+  let last = 0
+  for (const m of text.matchAll(LINK_RE)) {
+    const url = trimLink(m[0])
+    const at = m.index ?? 0
+    if (at > last) parts.push(text.slice(last, at))
+    parts.push(
+      <a key={at} className="msg-link" href={url} target="_blank" rel="noopener noreferrer" title={url}>
+        {url}
+      </a>,
+    )
+    last = at + url.length
+  }
+  if (last < text.length) parts.push(text.slice(last))
+  return <>{parts}</>
+}
+
+type Preview = { url: string; site: string; title: string; description: string; image: string | null; largeImage: boolean; color: string | null; youtube?: string }
+const previews = new Map<string, Promise<Preview | null>>()
+function loadPreview(url: string) {
+  let p = previews.get(url)
+  if (!p) {
+    p = api<Preview>(`/unfurl?url=${encodeURIComponent(url)}`).catch(() => null)
+    previews.set(url, p)
+  }
+  return p
+}
+
+/** Cartão de prévia do link; vídeos do YouTube tocam ali mesmo. */
+function LinkPreview({ url }: { url: string }) {
+  const [data, setData] = useState<Preview | null>(null)
+  const [playing, setPlaying] = useState(false)
+  useEffect(() => {
+    let alive = true
+    void loadPreview(url).then((d) => alive && setData(d))
+    return () => {
+      alive = false
+    }
+  }, [url])
+  if (!data) return null
+  const big = data.largeImage && data.image
+  return (
+    <div className={`embed ${big ? 'big' : ''}`} style={{ borderLeftColor: data.color ?? 'var(--accent)' }}>
+      <div className="embed-text">
+        <span className="embed-site">{data.site}</span>
+        {data.title && (
+          <a className="embed-title" href={data.url} target="_blank" rel="noopener noreferrer">
+            {data.title}
+          </a>
+        )}
+        {data.description && <p className="embed-desc">{data.description}</p>}
+      </div>
+      {data.youtube ? (
+        playing ? (
+          <iframe
+            className="embed-video"
+            src={`https://www.youtube-nocookie.com/embed/${data.youtube}?autoplay=1`}
+            title={data.title}
+            allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+            allowFullScreen
+            referrerPolicy="strict-origin-when-cross-origin"
+          />
+        ) : (
+          <button className="embed-play" title="Tocar aqui" onClick={() => setPlaying(true)}>
+            <img src={data.image!} alt="" loading="lazy" />
+            <span className="embed-play-btn" aria-hidden="true">
+              ▶
+            </span>
+          </button>
+        )
+      ) : (
+        data.image && (
+          <a href={data.url} target="_blank" rel="noopener noreferrer" className={big ? 'embed-img-big' : 'embed-thumb'}>
+            <img src={data.image} alt="" loading="lazy" referrerPolicy="no-referrer" onError={(e) => (e.currentTarget.parentElement!.style.display = 'none')} />
+          </a>
+        )
+      )}
+    </div>
   )
 }
 
@@ -1950,6 +2081,46 @@ function SoundSettings(props: { value: { enabled: boolean; volume: number }; out
   )
 }
 
+function ThemePicker({ value, onChange }: { value: ThemeChoice; onChange: (v: ThemeChoice) => void }) {
+  const current = value.preset ?? 'taverna'
+  const accent = value.accent ?? THEMES[current].colors.accent
+  return (
+    <div className="theme-picker">
+      <div className="themes">
+        {(Object.keys(THEMES) as ThemeId[]).map((id) => {
+          const c = THEMES[id].colors
+          return (
+            <button
+              key={id}
+              type="button"
+              className={`theme ${id === current ? 'on' : ''}`}
+              style={{ background: c.bg, color: c.text, borderColor: id === current ? c.accent : c.line }}
+              onClick={() => onChange({ preset: id, accent: null })}
+              aria-pressed={id === current}
+            >
+              <span className="theme-swatch">
+                <i style={{ background: c.panel }} />
+                <i style={{ background: c.raised }} />
+                <i style={{ background: c.accent }} />
+              </span>
+              {THEMES[id].name}
+            </button>
+          )
+        })}
+      </div>
+      <div className="hotkey">
+        <span>Cor de destaque</span>
+        <input type="color" value={accent} aria-label="Cor de destaque" onChange={(e) => onChange({ preset: current, accent: e.target.value })} />
+        {value.accent && (
+          <button type="button" className="link" onClick={() => onChange({ preset: current, accent: null })}>
+            usar a do tema
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 /** Microfone e saída de áudio, salvos na conta. */
 function AudioSettingsModal(props: {
   settings: AudioSettings
@@ -2040,7 +2211,8 @@ function AudioSettingsModal(props: {
   return (
     <div className="veil" onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}>
       <div className="modal audio-settings">
-        <h3>Voz e áudio</h3>
+        <h3>Ajustes</h3>
+        <h4 className="settings-sub">Voz e áudio</h4>
         <label>
           Microfone
           <select value={inputId} onChange={(e) => pick('input', inputs, e.target.value)}>
@@ -2094,6 +2266,8 @@ function AudioSettingsModal(props: {
           output={outputId}
           onChange={(v) => props.onChange({ sounds: v })}
         />
+        <h4 className="settings-sub">Aparência</h4>
+        <ThemePicker value={props.settings.theme ?? {}} onChange={(v) => props.onChange({ theme: v })} />
         <p className="muted small">
           Tudo aqui fica salvo na sua conta, junto com o volume de cada pessoa (clique com o botão direito em alguém na sala de voz).
         </p>

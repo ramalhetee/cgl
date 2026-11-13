@@ -18,6 +18,15 @@ contextBridge.exposeInMainWorld('taverna', {
   state: () => ipcRenderer.invoke('launcher:state'),
   host: () => ipcRenderer.invoke('launcher:host'),
   connect: (address) => ipcRenderer.invoke('launcher:connect', address),
+  // atualização
+  updateState: () => ipcRenderer.invoke('update:state'),
+  updateCheck: () => ipcRenderer.invoke('update:check'),
+  updateApply: () => ipcRenderer.invoke('update:apply'),
+  onUpdate: (fn) => {
+    const h = (_e, st) => fn(st)
+    ipcRenderer.on('update:state', h)
+    return () => ipcRenderer.removeListener('update:state', h)
+  },
   // seletor de tela
   sources: () => ipcRenderer.invoke('picker:sources'),
   choose: (id, audio) => ipcRenderer.invoke('picker:choose', id, audio),

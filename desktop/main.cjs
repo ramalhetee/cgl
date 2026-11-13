@@ -11,6 +11,9 @@ const path = require('node:path')
 const { createHash } = require('node:crypto')
 const { pathToFileURL } = require('node:url')
 const { spawn } = require('node:child_process')
+const updater = require('./updater.cjs')
+// aberto só para instalar uma atualização: não inicia o app normal
+const APPLYING_UPDATE = updater.runApplyMode()
 
 const HOST_PORT = Number(process.env.TAVERNA_PORT || 3210)
 const BRIDGE_PORT = 32100
@@ -42,7 +45,7 @@ function migrateOldData() {
     }
   }
 }
-migrateOldData()
+if (!APPLYING_UPDATE) migrateOldData()
 
 let launcher = null
 let room = null // janela conectada a um servidor
@@ -283,7 +286,17 @@ const fromLauncher = (e) => launcher && e.sender === launcher.webContents
 const fromRoom = (e) => room && e.sender === room.webContents
 const fromPicker = (e) => picker && e.sender === picker.webContents
 
-ipcMain.handle('launcher:state', (e) => (fromLauncher(e) ? { hosting, addresses: lanAddresses(), recents: readRecents() } : null))
+ipcMain.handle('launcher:state', (e) =>
+  fromLauncher(e) ? { hosting, addresses: lanAddresses(), recents: readRecents(), version: app.getVersion() } : null)
+
+// ---------- atualização ----------
+const fromApp = (e) => fromLauncher(e) || fromRoom(e)
+ipcMain.handle('update:state', (e) => (fromApp(e) ? updater.getState() : null))
+ipcMain.handle('update:check', (e) => (fromApp(e) ? updater.check() : null))
+ipcMain.handle('update:apply', (e) => (fromApp(e) ? updater.apply() : false))
+updater.onChange((st) => {
+  for (const w of [launcher, room]) if (w && !w.isDestroyed()) w.webContents.send('update:state', st)
+})
 ipcMain.handle('launcher:host', async (e) => {
   if (!fromLauncher(e)) return
   try {
@@ -377,11 +390,14 @@ let quitting = false
 app.on('before-quit', () => (quitting = true))
 app.on('quit', stopTunnel)
 app.on('will-quit', () => globalShortcut.unregisterAll())
-if (!app.requestSingleInstanceLock()) app.quit()
+if (APPLYING_UPDATE) {
+  // nada: o modo de atualização cuida de tudo e fecha sozinho
+} else if (!app.requestSingleInstanceLock()) app.quit()
 else {
   app.on('second-instance', () => (room ?? launcher)?.focus())
   app.whenReady().then(() => {
     Menu.setApplicationMenu(null)
+    updater.start()
     openLauncher()
   })
   app.on('window-all-closed', () => app.quit())

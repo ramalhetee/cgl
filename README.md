@@ -45,3 +45,13 @@ enquanto o app do anfitrião estiver aberto. Texto, anexos e sinalização passa
 tela continuam indo direto entre os participantes.
 
 Testes do app empacotado: `node scripts/app-test.mjs`, `node scripts/picker-test.mjs` e `node scripts/tunnel-test.mjs`.
+
+## Atualização automática
+
+A partir da 0.5.0, o CGL confere a versão mais nova publicada em Releases ao abrir (e a cada 30 minutos),
+baixa o `CGL.zip` em segundo plano e confere o SHA-256 que o GitHub publica para o arquivo. Se não conferir,
+nada é instalado. Quando a pessoa clica em atualizar, a própria versão nova espera o app fechar, troca a pasta
+do app (com volta atrás se falhar) e reabre. Para publicar uma versão: suba `desktop/package.json` (`version`),
+rode `npm run pack`, compacte `release/CGL-win32-x64` como `CGL.zip` e crie a Release com a tag `vX.Y.Z`.
+Teste: `node scripts/updater-test.mjs` (simula o GitHub localmente).
+

@@ -25,12 +25,19 @@
   .recents button { padding: 3px 12px; border-radius: 999px; font-size: 13px; }
   code { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; user-select: all; }
   #error { color: var(--danger); min-height: 20px; }
+  .update { grid-template-columns: 1fr auto; align-items: center; padding: 14px 18px; border-color: var(--accent); }
+  .update[hidden] { display: none; }
+  .version { font-size: 12px; text-align: right; margin-top: -10px; }
 </style>
 </head>
 <body>
   <div>
     <h1>CGL</h1>
     <p>Hospede sua própria mesa ou entre na de alguém.</p>
+  </div>
+  <div class="card update" id="update" hidden>
+    <span id="update-text"></span>
+    <button class="primary" id="update-go" hidden>Reiniciar e atualizar</button>
   </div>
   <div class="card">
     <h2>Hospedar neste PC</h2>
@@ -47,6 +54,7 @@
     <div class="recents" id="recents"></div>
   </div>
   <p id="error"></p>
+  <p class="version" id="version"></p>
 <script>
   const $ = (id) => document.getElementById(id)
   const busy = (on) => { $('host').disabled = $('go').disabled = on }
@@ -58,8 +66,20 @@
   }
   $('host').onclick = () => run(() => window.taverna.host())
   $('join').onsubmit = (e) => { e.preventDefault(); run(() => window.taverna.connect($('address').value)) }
+  const showUpdate = (u) => {
+    if (!u) return
+    const box = $('update'), text = $('update-text'), go = $('update-go')
+    const show = { downloading: `Baixando a versão ${u.latest}… ${u.progress || 0}%`, ready: `A versão ${u.latest} está pronta.`, applying: 'Atualizando…', error: `Atualização: ${u.error}` }[u.status]
+    box.hidden = !show
+    text.textContent = show || ''
+    go.hidden = u.status !== 'ready'
+  }
+  $('update-go').onclick = () => { $('update-go').disabled = true; window.taverna.updateApply() }
+  window.taverna.updateState().then(showUpdate)
+  window.taverna.onUpdate(showUpdate)
   window.taverna.state().then((s) => {
     if (!s) return
+    $('version').textContent = `versão ${s.version}`
     $('host').textContent = s.hosting ? 'Abrir minha mesa' : 'Hospedar'
     const a = $('addresses')
     a.append('Seu endereço na rede: ')

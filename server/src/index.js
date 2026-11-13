@@ -10,6 +10,7 @@ import { pipeline } from 'node:stream/promises';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as d from './db.js';
+import { unfurl } from './unfurl.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3210);
@@ -120,6 +121,14 @@ app.put('/api/me/settings', { preHandler: auth }, async (req, reply) => {
       if (v === '' || (typeof v === 'string' && v.length <= 40 && /^[\x21-\x7e]+$/.test(v))) out.hotkeys[k] = v;
     }
   }
+  if ('theme' in b) {
+    const t = b.theme || {};
+    const presets = ['taverna', 'meia-noite', 'floresta', 'ameixa', 'grafite', 'claro'];
+    out.theme = {
+      preset: presets.includes(t.preset) ? t.preset : 'taverna',
+      accent: typeof t.accent === 'string' && /^#[0-9a-f]{6}$/i.test(t.accent) ? t.accent.toLowerCase() : null,
+    };
+  }
   if ('volumes' in b) {
     if (!b.volumes || typeof b.volumes !== 'object') return fail(reply, 400, 'Volumes inválidos');
     out.volumes = {};
@@ -163,6 +172,22 @@ app.patch('/api/me', { preHandler: auth }, async (req, reply) => {
   }
   io.emit('user:update', pub);
   return { ...pub, bio: user.bio ?? null };
+});
+
+// prévia de links (limite simples por pessoa, para ninguém usar o servidor como robô de busca)
+const unfurlHits = new Map();
+app.get('/api/unfurl', { preHandler: auth }, async (req, reply) => {
+  const url = typeof req.query.url === 'string' ? req.query.url.slice(0, 2000) : '';
+  const now = Date.now();
+  const hits = (unfurlHits.get(req.user.id) || []).filter((t) => now - t < 60000);
+  if (hits.length >= 60) return fail(reply, 429, 'Muitas prévias em pouco tempo');
+  hits.push(now);
+  unfurlHits.set(req.user.id, hits);
+  try {
+    return await unfurl(url);
+  } catch {
+    return fail(reply, 404, 'Sem prévia');
+  }
 });
 
 app.get('/api/users/:id', { preHandler: auth }, async (req, reply) => {
