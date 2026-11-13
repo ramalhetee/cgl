@@ -18,7 +18,7 @@ const newer = join(work, 'nova', 'CGL-win32-x64')
 const ps = (cmd) => execFileSync('powershell', ['-NoProfile', '-Command', cmd]).toString().trim()
 
 console.log('preparando cópias...')
-cpSync(built, install, { recursive: true })
+cpSync(process.env.TAVERNA_OLD_BUILD || built, install, { recursive: true })
 cpSync(built, newer, { recursive: true })
 const pkgPath = join(newer, 'resources', 'app', 'package.json')
 const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
@@ -47,7 +47,7 @@ await new Promise((r) => server.once('listening', r))
 const api = `http://127.0.0.1:${server.address().port}/latest`
 
 const launch = (dbg) =>
-  spawn(join(install, 'CGL.exe'), [`--remote-debugging-port=${dbg}`, `--user-data-dir=${join(work, 'dados-' + dbg)}`], { env: { ...process.env, CGL_UPDATE_API: api, TAVERNA_PORT: '3328' }, stdio: 'ignore' })
+  spawn(join(install, 'CGL.exe'), [`--remote-debugging-port=${dbg}`, `--user-data-dir=${join(work, 'dados-' + dbg)}`], { env: { ...process.env, CGL_UPDATE_API: api, TAVERNA_PORT: '3328' }, stdio: 'ignore', cwd: install })
 const launcherPage = async (dbg) => {
   for (let i = 0; i < 60; i++) {
     try {

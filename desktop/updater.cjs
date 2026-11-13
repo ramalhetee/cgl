@@ -114,7 +114,7 @@ function apply() {
     failFile: path.join(app.getPath('userData'), 'atualizacao-falhou.txt'),
   }
   const payload = Buffer.from(JSON.stringify(job)).toString('base64url')
-  const child = spawn(path.join(staged.dir, 'CGL.exe'), [`--cgl-apply-update=${payload}`], { detached: true, stdio: 'ignore' })
+  const child = spawn(path.join(staged.dir, 'CGL.exe'), [`--cgl-apply-update=${payload}`], { detached: true, stdio: 'ignore', cwd: staged.work })
   child.unref()
   setTimeout(() => app.quit(), 200)
   return true
@@ -134,6 +134,11 @@ function runApplyMode() {
     app.exit(1)
     return true
   }
+  // Quem abre o app com duplo clique deixa a pasta do app como pasta atual, e este processo herda isso.
+  // Enquanto um processo "está dentro" da pasta, o Windows não deixa renomeá-la: sai dela antes de tudo.
+  try {
+    process.chdir(os.tmpdir())
+  } catch {}
   const source = path.dirname(process.execPath)
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   const alive = (pid) => {
@@ -168,8 +173,14 @@ function runApplyMode() {
           await sleep(500) // algum arquivo ainda preso pelo app que está fechando
         }
       }
-      if (!moved) fail('arquivos do app ainda em uso')
-      else {
+      if (!moved) {
+        // plano B: copia os arquivos novos por cima dos antigos (funciona se nenhum arquivo estiver aberto)
+        try {
+          fs.cpSync(source, job.target, { recursive: true, force: true })
+        } catch (e) {
+          fail(`não deu para trocar os arquivos (${e.code || e.message}); feche o CGL e tente de novo`)
+        }
+      } else {
         try {
           fs.cpSync(source, job.target, { recursive: true })
           fs.rmSync(backup, { recursive: true, force: true })
@@ -184,7 +195,7 @@ function runApplyMode() {
     }
     // 3. reabre o app (versão nova, ou a antiga se a troca falhou)
     const exe = path.join(job.target, 'CGL.exe')
-    if (fs.existsSync(exe)) spawn(exe, Array.isArray(job.args) ? job.args : [], { detached: true, stdio: 'ignore' }).unref()
+    if (fs.existsSync(exe)) spawn(exe, Array.isArray(job.args) ? job.args : [], { detached: true, stdio: 'ignore', cwd: job.target }).unref()
     app.exit(0)
   })()
   return true
@@ -208,8 +219,12 @@ function start() {
   // se a última atualização falhou, avisa uma vez
   const fail = path.join(app.getPath('userData'), 'atualizacao-falhou.txt')
   if (fs.existsSync(fail)) {
+    let why = ''
+    try {
+      why = fs.readFileSync(fail, 'utf8').trim().slice(0, 200)
+    } catch {}
     fs.rmSync(fail, { force: true })
-    set({ status: 'error', error: 'a última atualização não terminou de copiar os arquivos; baixe a versão nova pelo GitHub' })
+    set({ status: 'error', error: `a última atualização não terminou${why ? ` (${why})` : ''}; vou tentar de novo` })
   }
 }
 
