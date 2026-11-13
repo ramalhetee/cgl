@@ -14,8 +14,11 @@ const evaluate = (page, expression) => new Promise((resolve, reject) => {
   ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression, awaitPromise: true, returnByValue: true, userGesture: true } }))
   ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.id !== 1) return; ws.close(); m.result.exceptionDetails ? reject(new Error(m.result.exceptionDetails.exception?.description)) : resolve(m.result.result.value) }
 })
+// espera a tela inicial terminar de carregar (a janela aparece para o depurador antes disso)
+const ready = async (p) => { for (let i = 0; i < 60; i++) { try { if (await evaluate(p, "document.readyState === 'complete' && !!window.taverna")) return p } catch {} await sleep(250) } return p }
+
 try {
-  void evaluate(await waitPage('launcher.html'), "document.getElementById('host').click()").catch(() => {})
+  void evaluate(await ready(await waitPage('launcher.html')), "document.getElementById('host').click()").catch(() => {})
   const host = await waitPage('localhost:3312'); await sleep(800)
   void evaluate(host, "navigator.mediaDevices.getDisplayMedia({video:true,audio:{restrictOwnAudio:true}}).then(s=>{window.__s=s.getTracks().map(t=>t.kind+':'+t.readyState).join(',');s.getTracks().forEach(t=>t.stop())},e=>window.__s='erro '+e.name)").catch(() => {})
   const pk = await waitPage('picker.html'); await sleep(1200)

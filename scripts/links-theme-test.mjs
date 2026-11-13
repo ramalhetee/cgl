@@ -21,8 +21,11 @@ const call = (path, body) => `fetch('${path}',{method:'POST',headers:{'content-t
 const type = (sel, value) => `(()=>{const el=document.querySelector(${JSON.stringify(sel)});Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(el,${JSON.stringify(value)});el.dispatchEvent(new Event('input',{bubbles:true}));return true})()`
 const cssVar = (n) => `getComputedStyle(document.documentElement).getPropertyValue('--${n}').trim()`
 
+// espera a tela inicial terminar de carregar (a janela aparece para o depurador antes disso)
+const ready = async (p) => { for (let i = 0; i < 60; i++) { try { if (await evaluate(p, "document.readyState === 'complete' && !!window.taverna")) return p } catch {} await sleep(250) } return p }
+
 try {
-  const launcher = await waitPage('launcher.html')
+  const launcher = await ready(await waitPage('launcher.html'))
   console.log('versão na tela inicial:', await evaluate(launcher, "new Promise(r=>setTimeout(()=>r(document.getElementById('version').textContent),800))"))
   void evaluate(launcher, "document.getElementById('host').click()").catch(() => {})
   let host = await waitPage(`localhost:${PORT}`)

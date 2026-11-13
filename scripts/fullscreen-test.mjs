@@ -19,8 +19,11 @@ const evaluate = (page, expression) => new Promise((resolve, reject) => {
 })
 const post = (path, body) => `fetch('${path}',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+(localStorage.getItem('cgl.token')||'')},body:JSON.stringify(${JSON.stringify(body)})}).then(r=>r.json())`
 
+// espera a tela inicial terminar de carregar (a janela aparece para o depurador antes disso)
+const ready = async (p) => { for (let i = 0; i < 60; i++) { try { if (await evaluate(p, "document.readyState === 'complete' && !!window.taverna")) return p } catch {} await sleep(250) } return p }
+
 try {
-  void evaluate(await waitPage('launcher.html'), "document.getElementById('host').click()").catch(() => {})
+  void evaluate(await ready(await waitPage('launcher.html')), "document.getElementById('host').click()").catch(() => {})
   let host = await waitPage(`localhost:${PORT}`)
   await sleep(800)
   await evaluate(host, post('/api/register', { username: 'tela_cheia', password: 'teste-local-7' }) + ".then(j=>localStorage.setItem('cgl.token',j.token))")

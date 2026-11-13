@@ -32,10 +32,13 @@ const gains = "JSON.stringify([...(globalThis.__cglMixer?.entries?.values()??[])
 const reload = async (dbg, page, url) => { void evaluate(page, 'location.reload()').catch(() => {}); await sleep(2500); return waitPage(dbg, url) }
 const joinRoom = "[...document.querySelectorAll('.row')].find(b=>b.textContent.includes('Sala de voz')).click()"
 
+// espera a tela inicial terminar de carregar (a janela aparece para o depurador antes disso)
+const ready = async (p) => { for (let i = 0; i < 60; i++) { try { if (await evaluate(p, "document.readyState === 'complete' && !!window.taverna")) return p } catch {} await sleep(250) } return p }
+
 try {
   // anfitrião
   launch(9401)
-  void evaluate(await waitPage(9401, 'launcher.html'), "document.getElementById('host').click()").catch(() => {})
+  void evaluate(await ready(await waitPage(9401, 'launcher.html')), "document.getElementById('host').click()").catch(() => {})
   let host = await waitPage(9401, `localhost:${PORT}`)
   await sleep(800)
   const hostId = await evaluate(host, login('anfitriao'))
@@ -45,7 +48,7 @@ try {
 
   // convidado, pela ponte
   launch(9402)
-  void evaluate(await waitPage(9402, 'launcher.html'), `document.getElementById('address').value='127.0.0.1:${PORT}';document.getElementById('go').click()`).catch(() => {})
+  void evaluate(await ready(await waitPage(9402, 'launcher.html')), `document.getElementById('address').value='127.0.0.1:${PORT}';document.getElementById('go').click()`).catch(() => {})
   let guest = await waitPage(9402, '127.0.0.1:32100')
   await sleep(800)
   const guestId = await evaluate(guest, login('convidado'))

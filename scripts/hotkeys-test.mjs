@@ -29,9 +29,12 @@ const state = "JSON.stringify((()=>{const b=document.querySelectorAll('.stage-ba
 // Ctrl+Alt+Shift+F9 e F10 pelo Windows (SendKeys: ^ Ctrl, % Alt, + Shift)
 const press = (keys) => execFileSync('powershell', ['-NoProfile', '-Command', `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('${keys}')`])
 
+// espera a tela inicial terminar de carregar (a janela aparece para o depurador antes disso)
+const ready = async (p) => { for (let i = 0; i < 60; i++) { try { if (await evaluate(p, "document.readyState === 'complete' && !!window.taverna")) return p } catch {} await sleep(250) } return p }
+
 try {
   launch(9431)
-  void evaluate(await waitPage(9431, 'launcher.html'), "document.getElementById('host').click()").catch(() => {})
+  void evaluate(await ready(await waitPage(9431, 'launcher.html')), "document.getElementById('host').click()").catch(() => {})
   let host = await waitPage(9431, `localhost:${PORT}`)
   await sleep(800)
   await evaluate(host, login('anfitriao'))
@@ -46,7 +49,7 @@ try {
   console.log('entrar na chamada:', await evaluate(host, cues))
 
   launch(9432)
-  void evaluate(await waitPage(9432, 'launcher.html'), `document.getElementById('address').value='127.0.0.1:${PORT}';document.getElementById('go').click()`).catch(() => {})
+  void evaluate(await ready(await waitPage(9432, 'launcher.html')), `document.getElementById('address').value='127.0.0.1:${PORT}';document.getElementById('go').click()`).catch(() => {})
   let guest = await waitPage(9432, '127.0.0.1:32100')
   await sleep(800)
   await evaluate(guest, login('convidado'))

@@ -24,8 +24,11 @@ const type = (sel, value) => `(()=>{const el=document.querySelector(${JSON.strin
 // PNG 2x2 gerado na hora, enviado pelo mesmo campo de arquivo que o usuário usa
 const pickPhoto = `(async()=>{const c=document.createElement('canvas');c.width=c.height=2;c.getContext('2d').fillRect(0,0,2,2);const blob=await new Promise(r=>c.toBlob(r,'image/png'));const dt=new DataTransfer();dt.items.add(new File([blob],'foto.png',{type:'image/png'}));const input=document.querySelector('.profile-edit input[type=file]');input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));return true})()`
 
+// espera a tela inicial terminar de carregar (a janela aparece para o depurador antes disso)
+const ready = async (p) => { for (let i = 0; i < 60; i++) { try { if (await evaluate(p, "document.readyState === 'complete' && !!window.taverna")) return p } catch {} await sleep(250) } return p }
+
 try {
-  void evaluate(await waitPage('launcher.html'), "document.getElementById('host').click()").catch(() => {})
+  void evaluate(await ready(await waitPage('launcher.html')), "document.getElementById('host').click()").catch(() => {})
   let host = await waitPage(`localhost:${PORT}`)
   await sleep(800)
   await evaluate(host, post('/api/register', { username: 'perfil_teste', password: 'teste-local-6' }) + ".then(j=>localStorage.setItem('cgl.token',j.token))")

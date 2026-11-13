@@ -48,10 +48,13 @@ function evaluate(page, expression) {
   })
 }
 
+// espera a tela inicial terminar de carregar (a janela aparece para o depurador antes disso)
+const ready = async (p) => { for (let i = 0; i < 60; i++) { try { if (await evaluate(p, "document.readyState === 'complete' && !!window.taverna")) return p } catch {} await sleep(250) } return p }
+
 try {
   // 1. anfitrião
   launch(9333)
-  const l1 = await waitPage(9333, 'launcher.html')
+  const l1 = await ready(await waitPage(9333, 'launcher.html'))
   console.log('tela inicial:', await evaluate(l1, "document.querySelector('h1').textContent + ' | ' + document.getElementById('addresses').textContent"))
   void evaluate(l1, "document.getElementById('host').click()").catch(() => {})
   const host = await waitPage(9333, `localhost:${PORT}`)
@@ -61,7 +64,7 @@ try {
 
   // 2. convidado, pela ponte
   launch(9334)
-  const l2 = await waitPage(9334, 'launcher.html')
+  const l2 = await ready(await waitPage(9334, 'launcher.html'))
   void evaluate(l2, `document.getElementById('address').value='127.0.0.1:${PORT}';document.getElementById('go').click()`).catch(() => {})
   const guest = await waitPage(9334, '127.0.0.1:32100')
   await sleep(800)
@@ -72,7 +75,7 @@ try {
   console.log('tempo real pela ponte:', await evaluate(guest, `new Promise((res)=>{const w=new WebSocket('ws://127.0.0.1:32100/socket.io/?EIO=4&transport=websocket');w.onmessage=(e)=>{if(e.data.startsWith('0')){w.send('40'+JSON.stringify({token:localStorage.getItem('t')}))}else if(e.data.startsWith('40')){res('conectado');w.close()}else if(e.data.startsWith('44')){res('recusado '+e.data)}};w.onerror=()=>res('falhou');setTimeout(()=>res('sem resposta'),5000)})`))
   console.log('endereço errado:', await (async () => {
     launch(9335)
-    const l3 = await waitPage(9335, 'launcher.html')
+    const l3 = await ready(await waitPage(9335, 'launcher.html'))
     await evaluate(l3, "window.taverna.connect('127.0.0.1:3999').then(r=>window.__r=r)")
     return JSON.stringify(await evaluate(l3, 'window.__r'))
   })())

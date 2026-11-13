@@ -316,3 +316,7 @@ button:active:not(:disabled) { transform: scale(.97); }
 
 /* atualização disponível */
 .update-chip { background: var(--ok); border-color: var(--ok); color: #0b1a0b; font-weight: 600; }
+
+/* ocultar a tela de outra pessoa */
+.tile-hide { position: absolute; top: 8px; left: 8px; background: #000a; border-color: transparent; color: #fff; opacity: 0; z-index: 1; }
+.tile:hover .tile-hide, .tile-hide:focus-visible { opacity: 1; }

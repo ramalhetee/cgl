@@ -7,6 +7,8 @@ type Link = {
   pc: RTCPeerConnection
   info: VoicePeer
   streams: Map<string, MediaStream>
+  /** faixas da minha tela enviadas para esta pessoa (para pausar quando ela oculta) */
+  screenSenders: { sender: RTCRtpSender; track: MediaStreamTrack }[]
   makingOffer: boolean
   ignoreOffer: boolean
   polite: boolean
@@ -20,6 +22,8 @@ export type VoiceSnapshot = {
   video: boolean
   screen: boolean
   screenAudio: boolean
+  /** pessoas cuja tela eu ocultei */
+  notWatching: string[]
   micOk: boolean
   mic: MediaStream | null
   camera: MediaStream | null
@@ -40,6 +44,8 @@ export class VoiceSession {
   private deafened = false
   private mutedBeforeDeaf = false
   private closed = false
+  private notWatching = new Set<string>() // telas que eu ocultei
+  private hiddenFrom = new Set<string>() // quem ocultou a minha tela
   private speaking = false
   private stopMonitor: (() => void) | null = null
   private socket: Socket
@@ -52,6 +58,8 @@ export class VoiceSession {
     this.channelId = channelId
     this.onChange = onChange
     this.inputId = inputId
+    // usado pelos testes automáticos (estatísticas de envio e recebimento)
+    ;(globalThis as { __cglVoice?: VoiceSession }).__cglVoice = this
   }
 
   private async openMic(id: string): Promise<MediaStream | null> {
@@ -100,6 +108,7 @@ export class VoiceSession {
     this.socket.on('voice:peer-left', this.onPeerLeft)
     this.socket.on('voice:signal', this.onSignal)
     this.socket.on('voice:state', this.onState)
+    this.socket.on('voice:watch', this.onWatch)
     const res: { peers?: VoicePeer[]; error?: string } = await this.socket.emitWithAck('voice:join', {
       channelId: this.channelId,
     })
@@ -116,6 +125,7 @@ export class VoiceSession {
     this.socket.off('voice:peer-left', this.onPeerLeft)
     this.socket.off('voice:signal', this.onSignal)
     this.socket.off('voice:state', this.onState)
+    this.socket.off('voice:watch', this.onWatch)
     this.stopMonitor?.()
     this.socket.emit('voice:leave')
     for (const l of this.links.values()) l.pc.close()
@@ -219,7 +229,25 @@ export class VoiceSession {
   }
 
   private shareStream(stream: MediaStream) {
-    for (const l of this.links.values()) for (const t of stream.getTracks()) this.tune(l.pc.addTrack(t, stream), stream)
+    for (const l of this.links.values()) for (const t of stream.getTracks()) this.addTo(l, t, stream)
+  }
+
+  /** Envia uma faixa para uma pessoa; faixas da tela ficam pausadas para quem ocultou a minha tela. */
+  private addTo(l: Link, track: MediaStreamTrack, stream: MediaStream) {
+    const sender = l.pc.addTrack(track, stream)
+    this.tune(sender, stream)
+    if (stream === this.display) {
+      l.screenSenders.push({ sender, track })
+      if (this.hiddenFrom.has(l.info.socketId)) void sender.replaceTrack(null)
+    }
+  }
+
+  /** Para de assistir (ou volta a assistir) a tela de alguém: pede para a pessoa parar de mandar. */
+  setWatching(socketId: string, watching: boolean) {
+    if (watching) this.notWatching.delete(socketId)
+    else this.notWatching.add(socketId)
+    this.socket.emit('voice:watch', { to: socketId, watching })
+    this.emit()
   }
 
   /** Tela: mais banda e taxa de quadros estável. Câmera: teto moderado pra não disputar banda. */
@@ -240,7 +268,13 @@ export class VoiceSession {
     const tracks = new Set(stream.getTracks())
     for (const l of this.links.values()) {
       for (const sender of l.pc.getSenders()) if (sender.track && tracks.has(sender.track)) l.pc.removeTrack(sender)
+      if (stream === this.display) {
+        // as faixas pausadas (sem track) também saem
+        for (const { sender } of l.screenSenders) if (!sender.track) l.pc.removeTrack(sender)
+        l.screenSenders = []
+      }
     }
+    if (stream === this.display) this.hiddenFrom.clear()
     tracks.forEach((t) => t.stop())
   }
 
@@ -264,6 +298,7 @@ export class VoiceSession {
       pc,
       info,
       streams: new Map(),
+      screenSenders: [],
       makingOffer: false,
       ignoreOffer: false,
       // "perfect negotiation": em colisão de ofertas, o lado educado cede
@@ -298,7 +333,7 @@ export class VoiceSession {
       if (pc.connectionState === 'failed') pc.restartIce()
     }
     for (const s of [this.mic, this.camera, this.display]) {
-      if (s) for (const t of s.getTracks()) this.tune(pc.addTrack(t, s), s)
+      if (s) for (const t of s.getTracks()) this.addTo(l, t, s)
     }
     // sem nada pra enviar ainda: abre um canal de áudio só de recepção pra iniciar a conexão
     if (pc.getSenders().length === 0) pc.addTransceiver('audio', { direction: 'recvonly' })
@@ -311,13 +346,25 @@ export class VoiceSession {
   }
 
   private onPeerLeft = ({ socketId }: { socketId: string }) => {
+    this.notWatching.delete(socketId)
+    this.hiddenFrom.delete(socketId)
     this.links.get(socketId)?.pc.close()
     this.links.delete(socketId)
     this.emit()
   }
 
+  private onWatch = ({ from, watching }: { from: string; watching: boolean }) => {
+    if (watching) this.hiddenFrom.delete(from)
+    else this.hiddenFrom.add(from)
+    const l = this.links.get(from)
+    if (!l) return
+    for (const { sender, track } of l.screenSenders) void sender.replaceTrack(watching ? track : null).catch(() => {})
+  }
+
   private onState = (info: VoicePeer) => {
     const l = this.links.get(info.socketId)
+    // parou de transmitir: na próxima vez a tela volta a aparecer
+    if (!info.screen) this.notWatching.delete(info.socketId)
     if (l) l.info = info
     this.emit()
   }
@@ -357,6 +404,7 @@ export class VoiceSession {
       video: !!this.camera,
       screen: !!this.display,
       screenAudio: !!this.display?.getAudioTracks().length,
+      notWatching: [...this.notWatching],
       micOk: !!this.mic,
       mic: this.mic,
       camera: this.camera,

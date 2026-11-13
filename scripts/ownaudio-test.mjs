@@ -46,8 +46,11 @@ const measure = (host, ms) => evaluate(host, `new Promise(res=>{const ctx=new Au
 const playInside = (host) => evaluate(host, "(()=>{const ctx=new AudioContext();const o=ctx.createOscillator();const g=ctx.createGain();o.frequency.value=440;g.gain.value=0.3;o.connect(g).connect(ctx.destination);o.start();setTimeout(()=>{o.stop();ctx.close()},1500);return true})()")
 const stopCap = (host) => evaluate(host, 'window.__cap.getTracks().forEach(t=>t.stop()); true')
 
+// espera a tela inicial terminar de carregar (a janela aparece para o depurador antes disso)
+const ready = async (p) => { for (let i = 0; i < 60; i++) { try { if (await evaluate(p, "document.readyState === 'complete' && !!window.taverna")) return p } catch {} await sleep(250) } return p }
+
 try {
-  void evaluate(await waitPage('launcher.html'), "document.getElementById('host').click()").catch(() => {})
+  void evaluate(await ready(await waitPage('launcher.html')), "document.getElementById('host').click()").catch(() => {})
   const host = await waitPage(`localhost:${PORT}`)
   await sleep(1000)
   const results = {}

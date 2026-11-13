@@ -22,8 +22,11 @@ const call = (path, body) => `fetch('${path}',{method:'POST',headers:{'content-t
 const viewer = "JSON.stringify((()=>{const v=document.querySelector('.viewer');if(!v)return null;const i=v.querySelector('.viewer-img');return {nome:v.querySelector('.viewer-info b').textContent,info:v.querySelector('.viewer-info .muted').textContent.split(' · ').pop(),zoom:v.querySelector('.viewer-zoom').textContent,transform:i.style.transform}})())"
 const key = (k) => `dispatchEvent(new KeyboardEvent('keydown',{key:'${k}'}))`
 
+// espera a tela inicial terminar de carregar (a janela aparece para o depurador antes disso)
+const ready = async (p) => { for (let i = 0; i < 60; i++) { try { if (await evaluate(p, "document.readyState === 'complete' && !!window.taverna")) return p } catch {} await sleep(250) } return p }
+
 try {
-  void evaluate(await waitPage('launcher.html'), "document.getElementById('host').click()").catch(() => {})
+  void evaluate(await ready(await waitPage('launcher.html')), "document.getElementById('host').click()").catch(() => {})
   let host = await waitPage(`localhost:${PORT}`)
   await sleep(800)
   await evaluate(host, "fetch('/api/register',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'imagens',password:'teste-local-1'})}).then(r=>r.json()).then(j=>localStorage.setItem('cgl.token',j.token))")

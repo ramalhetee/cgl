@@ -380,6 +380,12 @@ io.on('connection', (socket) => {
 
   socket.on('voice:leave', () => leaveVoice(socket));
 
+  socket.on('voice:watch', ({ to, watching } = {}) => {
+    const room = voice.get(socket.data.voiceChannel);
+    if (!room || typeof to !== 'string' || !room.has(to)) return;
+    io.to(to).emit('voice:watch', { from: socket.id, watching: watching !== false });
+  });
+
   socket.on('voice:signal', ({ to, data } = {}) => {
     const room = voice.get(socket.data.voiceChannel);
     if (!room || typeof to !== 'string' || !room.has(to)) return;

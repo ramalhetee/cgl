@@ -76,6 +76,9 @@ const waitStatus = async (page, want, ms = 60000) => {
 }
 const running = () => ps(`@(Get-CimInstance Win32_Process -Filter "Name='CGL.exe'" | Where-Object { $_.ExecutablePath -like '${install.replace(/'/g, "''")}*' }).Count`)
 
+// espera a tela inicial terminar de carregar (a janela aparece para o depurador antes disso)
+const ready = async (p) => { for (let i = 0; i < 60; i++) { try { if (await evaluate(p, "document.readyState === 'complete' && !!window.taverna")) return p } catch {} await sleep(250) } return p }
+
 try {
   // 1. arquivo adulterado: recusado
   let app = launch(9461)

@@ -19,9 +19,12 @@ const evaluate = (page, expression) => new Promise((resolve, reject) => {
 })
 const register = (name) => `fetch('/api/register',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'${name}_'+Date.now()%100000,password:'teste-local-9'})}).then(r=>r.json()).then(j=>{localStorage.setItem('t',j.token);return !!j.token})`
 
+// espera a tela inicial terminar de carregar (a janela aparece para o depurador antes disso)
+const ready = async (p) => { for (let i = 0; i < 60; i++) { try { if (await evaluate(p, "document.readyState === 'complete' && !!window.taverna")) return p } catch {} await sleep(250) } return p }
+
 try {
   launch(9341)
-  void evaluate(await waitPage(9341, 'launcher.html'), "document.getElementById('host').click()").catch(() => {})
+  void evaluate(await ready(await waitPage(9341, 'launcher.html')), "document.getElementById('host').click()").catch(() => {})
   const host = await waitPage(9341, `localhost:${PORT}`)
   await sleep(800)
   const t0 = Date.now()
@@ -39,7 +42,7 @@ try {
   console.log('link responde de fora:', ok, ok ? '' : why)
 
   launch(9342)
-  const l2 = await waitPage(9342, 'launcher.html')
+  const l2 = await ready(await waitPage(9342, 'launcher.html'))
   void evaluate(l2, `window.taverna.connect(${JSON.stringify(started.url)}).then(r=>window.__r=r)`).catch(() => {})
   const guest = await waitPage(9342, '127.0.0.1:32100')
   await sleep(1500)

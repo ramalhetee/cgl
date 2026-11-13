@@ -21,8 +21,11 @@ const post = (path, body) => `fetch('${path}',{method:'POST',headers:{'content-t
 // observa por alguns segundos se o anel aparece e se some
 const watch = (ms) => `new Promise((res)=>{let on=0,off=0;const t=setInterval(()=>{document.querySelector('.occupant .avatar.talking')?on++:off++},60);setTimeout(()=>{clearInterval(t);res({on,off})},${ms})})`
 
+// espera a tela inicial terminar de carregar (a janela aparece para o depurador antes disso)
+const ready = async (p) => { for (let i = 0; i < 60; i++) { try { if (await evaluate(p, "document.readyState === 'complete' && !!window.taverna")) return p } catch {} await sleep(250) } return p }
+
 try {
-  void evaluate(await waitPage('launcher.html'), "document.getElementById('host').click()").catch(() => {})
+  void evaluate(await ready(await waitPage('launcher.html')), "document.getElementById('host').click()").catch(() => {})
   let host = await waitPage(`localhost:${PORT}`)
   await sleep(800)
   await evaluate(host, post('/api/register', { username: 'falante', password: 'teste-local-8' }) + ".then(j=>localStorage.setItem('cgl.token',j.token))")

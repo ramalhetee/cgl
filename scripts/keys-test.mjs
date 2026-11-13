@@ -24,8 +24,11 @@ const muted = "document.querySelectorAll('.stage-bar .voice-buttons button')[0].
 const record = (i, code, key, mods = {}) => `(async()=>{document.querySelectorAll('.hotkey-key')[${i}].click();await new Promise(r=>setTimeout(r,150));dispatchEvent(new KeyboardEvent('keydown',{code:'${code}',key:${JSON.stringify(key)},bubbles:true,...${JSON.stringify(mods)}}));await new Promise(r=>setTimeout(r,900));const f=document.querySelectorAll('.hotkey')[${i}];return f.querySelector('.hotkey-key').textContent+(f.querySelector('.error')?' | ERRO: '+f.querySelector('.error').textContent:'')})()`
 const press = (keys) => execFileSync('powershell', ['-NoProfile', '-Command', `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('${keys}')`])
 
+// espera a tela inicial terminar de carregar (a janela aparece para o depurador antes disso)
+const ready = async (p) => { for (let i = 0; i < 60; i++) { try { if (await evaluate(p, "document.readyState === 'complete' && !!window.taverna")) return p } catch {} await sleep(250) } return p }
+
 try {
-  void evaluate(await waitPage('launcher.html'), "document.getElementById('host').click()").catch(() => {})
+  void evaluate(await ready(await waitPage('launcher.html')), "document.getElementById('host').click()").catch(() => {})
   let host = await waitPage(`localhost:${PORT}`)
   await sleep(800)
   await evaluate(host, "fetch('/api/register',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'teclas',password:'teste-local-2'})}).then(r=>r.json()).then(j=>localStorage.setItem('cgl.token',j.token))")

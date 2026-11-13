@@ -20,8 +20,11 @@ const evaluate = (page, expression) => new Promise((resolve, reject) => {
 const post = (path, body) => `fetch('${path}',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+(localStorage.getItem('cgl.token')||'')},body:JSON.stringify(${JSON.stringify(body)})}).then(r=>r.json())`
 const own = "[...document.querySelectorAll('.tile')].find(t=>t.textContent.includes('Sua tela'))"
 
+// espera a tela inicial terminar de carregar (a janela aparece para o depurador antes disso)
+const ready = async (p) => { for (let i = 0; i < 60; i++) { try { if (await evaluate(p, "document.readyState === 'complete' && !!window.taverna")) return p } catch {} await sleep(250) } return p }
+
 try {
-  const launcher = await waitPage('launcher.html')
+  const launcher = await ready(await waitPage('launcher.html'))
   console.log('nome na tela inicial:', await evaluate(launcher, "document.title + ' / ' + document.querySelector('h1').textContent"))
   void evaluate(launcher, "document.getElementById('host').click()").catch(() => {})
   let host = await waitPage(`localhost:${PORT}`)

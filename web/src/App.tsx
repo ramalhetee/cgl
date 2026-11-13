@@ -776,6 +776,7 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
             onLeave={leaveVoice}
             onSettings={() => setAudioOpen(true)}
             onVolume={(user, peer, x, y) => setVolMenu({ user, peer, x, y })}
+            onWatch={(socketId, watching) => session.current?.setWatching(socketId, watching)}
           />
         ) : channel?.type === 'voice' ? (
           <div className="empty">
@@ -1692,13 +1693,14 @@ function Stage(props: {
   onLeave: () => void
   onSettings: () => void
   onVolume: (user: User, peer: VoicePeer, x: number, y: number) => void
+  onWatch: (socketId: string, watching: boolean) => void
 }) {
   const { voice, me } = props
   const [focus, setFocus] = useState<string | null>(null)
   // A prévia da própria tela fica desligada por padrão: mostrar a tela dentro dela mesma cria um
   // espelho infinito, e cada volta pelo codificador de vídeo distorce mais as cores.
   const [ownPreview, setOwnPreview] = useState(false)
-  const tiles: { key: string; user: User; stream: MediaStream | null; voice?: MediaStream | null; label: string; screen?: boolean; own?: boolean; muted?: boolean; deaf?: boolean; peer?: VoicePeer }[] = []
+  const tiles: { key: string; user: User; stream: MediaStream | null; voice?: MediaStream | null; label: string; screen?: boolean; own?: boolean; hidden?: boolean; muted?: boolean; deaf?: boolean; peer?: VoicePeer }[] = []
   tiles.push({ key: 'me', user: me, stream: voice.camera, voice: voice.muted ? null : voice.mic, label: `${nameOf(me)} (você)`, muted: voice.muted || !voice.micOk, deaf: voice.deafened })
   if (voice.screenStream) tiles.push({ key: 'me-screen', user: me, stream: ownPreview ? voice.screenStream : null, label: 'Sua tela', screen: true, own: true })
   for (const r of voice.remotes) {
@@ -1706,16 +1708,19 @@ function Stage(props: {
     const scr = r.info.screen ? r.streams.find((s) => s.id === r.info.screenStream) ?? null : null
     const mic = r.streams.find((s) => s.id !== r.info.screenStream && s.getAudioTracks().length > 0) ?? null
     tiles.push({ key: r.info.socketId, user: r.info.user, stream: cam, voice: r.info.muted ? null : mic, label: nameOf(r.info.user), muted: r.info.muted, deaf: r.info.deaf, peer: r.info })
-    if (scr) tiles.push({ key: r.info.socketId + '-screen', user: r.info.user, stream: scr, label: `Tela de ${nameOf(r.info.user)}`, screen: true, peer: r.info })
+    const hidden = voice.notWatching.includes(r.info.socketId)
+    if (r.info.screen && (scr || hidden)) {
+      tiles.push({ key: r.info.socketId + '-screen', user: r.info.user, stream: hidden ? null : scr, label: `Tela de ${nameOf(r.info.user)}`, screen: true, hidden, peer: r.info })
+    }
   }
   // tela compartilhada ganha destaque sozinha, a menos que o usuário escolha outro foco
-  const focused = tiles.find((t) => t.key === focus) ?? tiles.find((t) => t.screen && !t.own) ?? tiles.find((t) => t.screen) ?? null
+  const focused = tiles.find((t) => t.key === focus) ?? tiles.find((t) => t.screen && !t.own && !t.hidden) ?? tiles.find((t) => t.screen && !t.hidden) ?? null
   const rest = focused ? tiles.filter((t) => t !== focused) : tiles
   const tile = (t: (typeof tiles)[number], big?: boolean) => (
     <Tile
       key={t.key}
       big={big}
-      noFull={t.own}
+      noFull={t.own || t.hidden}
       voice={t.voice ?? null}
       onClick={() => setFocus(focus === t.key ? null : t.key)}
       onVolume={t.peer ? (x, y) => props.onVolume(t.user, t.peer!, x, y) : undefined}
@@ -1742,8 +1747,38 @@ function Stage(props: {
             </button>
           </div>
         </>
+      ) : t.hidden ? (
+        <div className="own-screen">
+          <Icon name="tela" size={big ? 44 : 26} />
+          {big && <strong>{t.label}</strong>}
+          <button
+            className="chip"
+            onClick={(e) => {
+              e.stopPropagation()
+              props.onWatch(t.peer!.socketId, true)
+            }}
+          >
+            Assistir
+          </button>
+        </div>
       ) : t.stream ? (
-        <StreamVideo stream={t.stream} contain={t.screen} />
+        <>
+          <StreamVideo stream={t.stream} contain={t.screen} />
+          {t.screen && t.peer && (
+            <button
+              className="chip tile-hide"
+              title="Parar de assistir esta tela (some o vídeo e o som)"
+              onClick={(e) => {
+                e.stopPropagation()
+                if (focus === t.key) setFocus(null)
+                props.onWatch(t.peer!.socketId, false)
+              }}
+              onDoubleClick={(e) => e.stopPropagation()}
+            >
+              Ocultar
+            </button>
+          )}
+        </>
       ) : (
         <Avatar user={t.user} />
       )}

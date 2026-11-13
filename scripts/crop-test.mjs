@@ -27,8 +27,11 @@ const cropState = "(()=>{const i=document.querySelector('.crop-view img');return
 const openCrop = async (host) => { await evaluate(host, pickPhoto('image/png')); await sleep(900) }
 const use = async (host) => { await evaluate(host, "[...document.querySelectorAll('.crop .modal-actions button')].pop().click()"); await sleep(1500) }
 
+// espera a tela inicial terminar de carregar (a janela aparece para o depurador antes disso)
+const ready = async (p) => { for (let i = 0; i < 60; i++) { try { if (await evaluate(p, "document.readyState === 'complete' && !!window.taverna")) return p } catch {} await sleep(250) } return p }
+
 try {
-  void evaluate(await waitPage('launcher.html'), "document.getElementById('host').click()").catch(() => {})
+  void evaluate(await ready(await waitPage('launcher.html')), "document.getElementById('host').click()").catch(() => {})
   let host = await waitPage(`localhost:${PORT}`)
   await sleep(800)
   await evaluate(host, post('/api/register', { username: 'recorte', password: 'teste-local-5' }) + ".then(j=>localStorage.setItem('cgl.token',j.token))")
