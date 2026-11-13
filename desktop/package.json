@@ -1,0 +1,12 @@
+{
+  "name": "taverna-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^45.3.1"
+  }
+}

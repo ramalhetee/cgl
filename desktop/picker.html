@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:" />
+<title>Compartilhar tela</title>
+<style>
+  :root { --bg:#1b1613; --panel:#241d19; --line:#3d3129; --text:#efe6dc; --muted:#a39384; --accent:#e0a43a; color-scheme: dark; font: 14px system-ui, 'Segoe UI', sans-serif; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); display: flex; flex-direction: column; }
+  h3 { margin: 14px 18px 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); font-weight: 500; }
+  main { flex: 1; overflow-y: auto; padding-bottom: 8px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 0 18px; }
+  .item { background: var(--panel); border: 2px solid var(--line); border-radius: 10px; padding: 6px; cursor: pointer; display: grid; gap: 6px; color: inherit; font: inherit; text-align: left; transition: border-color .12s; }
+  .item:hover { border-color: var(--muted); }
+  .item.on { border-color: var(--accent); }
+  .item img { width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #000; border-radius: 6px; }
+  .item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  footer { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-top: 1px solid var(--line); }
+  footer label { flex: 1; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+  button.act { font: inherit; color: inherit; background: #30261f; border: 1px solid var(--line); border-radius: 8px; padding: 7px 16px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #2a1c05; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+</style>
+</head>
+<body>
+  <main>
+    <h3>Telas</h3><div class="grid" id="screens"></div>
+    <h3>Janelas</h3><div class="grid" id="windows"></div>
+  </main>
+  <footer>
+    <label><input type="checkbox" id="audio" disabled /> Incluir o som do PC (só tela inteira; pode dar eco na chamada)</label>
+    <button class="act" id="cancel">Cancelar</button>
+    <button class="act primary" id="share" disabled>Compartilhar</button>
+  </footer>
+<script>
+  let chosen = null
+  const $ = (id) => document.getElementById(id)
+  window.taverna.sources().then((list) => {
+    for (const s of list) {
+      const b = document.createElement('button'); b.className = 'item'
+      const img = document.createElement('img'); img.src = s.thumb
+      const name = document.createElement('span'); name.textContent = s.name
+      b.append(img, name)
+      b.onclick = () => {
+        document.querySelectorAll('.item.on').forEach((x) => x.classList.remove('on'))
+        b.classList.add('on'); chosen = s
+        $('share').disabled = false
+        $('audio').disabled = !s.screen
+        if (!s.screen) $('audio').checked = false
+      }
+      b.ondblclick = () => window.taverna.choose(s.id, $('audio').checked)
+      $(s.screen ? 'screens' : 'windows').append(b)
+    }
+  })
+  $('share').onclick = () => chosen && window.taverna.choose(chosen.id, $('audio').checked)
+  $('cancel').onclick = () => window.close()
+  addEventListener('keydown', (e) => e.key === 'Escape' && window.close())
+</script>
+</body>
+</html>

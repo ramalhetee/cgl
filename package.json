@@ -1,0 +1,23 @@
+{
+  "name": "taverna",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "server",
+    "web",
+    "desktop"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web",
+    "build": "npm run build -w web",
+    "start": "npm run start -w server",
+    "desktop": "node scripts/build-desktop.mjs && npm run start -w desktop",
+    "build:desktop": "node scripts/build-desktop.mjs",
+    "pack": "node scripts/build-desktop.mjs --pack"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "esbuild": "^0.28.2"
+  }
+}
