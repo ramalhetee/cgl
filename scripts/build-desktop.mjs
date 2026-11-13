@@ -1,4 +1,4 @@
-// Monta desktop/app: interface compilada + servidor num arquivo só. Com --pack, gera release/Taverna-win32-x64.
+// Monta desktop/app: interface compilada + servidor num arquivo só. Com --pack, gera release/CGL-win32-x64.
 import { build } from 'esbuild'
 import { execSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -41,10 +41,10 @@ console.log('cloudflared conferido')
 if (process.argv.includes('--pack')) {
   const { packager } = await import('@electron/packager')
   const [dir] = await packager({
-    dir: join(root, 'desktop'), name: 'Taverna', out: process.env.TAVERNA_OUT || join(root, 'release'), overwrite: true,
+    dir: join(root, 'desktop'), name: 'CGL', out: process.env.TAVERNA_OUT || join(root, 'release'), overwrite: true,
     platform: 'win32', arch: 'x64', asar: false, prune: false,
     ignore: [/^\/node_modules/],
-    appCopyright: 'Taverna', win32metadata: { ProductName: 'Taverna', FileDescription: 'Taverna' },
+    appCopyright: 'CGL', win32metadata: { ProductName: 'CGL', FileDescription: 'CGL' },
   })
   console.log('App em', dir)
 }

@@ -74,7 +74,7 @@ function Auth({ onLogin }: { onLogin: (t: string) => void }) {
   return (
     <div className="auth">
       <form className="auth-card" onSubmit={submit}>
-        <h1 className="brand">Taverna</h1>
+        <h1 className="brand">CGL</h1>
         <p className="muted">{mode === 'login' ? 'Entre na sua conta' : 'Crie sua conta'}</p>
         <label>
           Nome de usuário
@@ -395,7 +395,7 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
   return (
     <div className="app">
       <header className="topbar">
-        <span className="brand">Taverna</span>
+        <span className="brand">CGL</span>
         <nav className="tabs">
           <button className={`tab ${sel.kind === 'dm' ? 'on' : ''}`} onClick={() => setSel({ kind: 'dm', channelId: dms[0]?.id ?? null })}>
             Conversas{dmUnread && <i className="dot" />}
@@ -587,7 +587,7 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
           />
         ) : (
           <div className="empty">
-            <h2>Bem-vindo à Taverna</h2>
+            <h2>Bem-vindo ao CGL</h2>
             <p className="muted">Crie um servidor, entre com um convite ou abra uma conversa.</p>
           </div>
         )}
@@ -1239,9 +1239,12 @@ function VoiceButtons({ voice, media, onLeave }: { voice: VoiceSnapshot; media: 
 function Stage(props: { voice: VoiceSnapshot; me: User; title: string; media: MediaFn; onLeave: () => void }) {
   const { voice, me } = props
   const [focus, setFocus] = useState<string | null>(null)
-  const tiles: { key: string; user: User; stream: MediaStream | null; voice?: MediaStream | null; label: string; screen?: boolean; muted?: boolean; deaf?: boolean }[] = []
+  // A prévia da própria tela fica desligada por padrão: mostrar a tela dentro dela mesma cria um
+  // espelho infinito, e cada volta pelo codificador de vídeo distorce mais as cores.
+  const [ownPreview, setOwnPreview] = useState(false)
+  const tiles: { key: string; user: User; stream: MediaStream | null; voice?: MediaStream | null; label: string; screen?: boolean; own?: boolean; muted?: boolean; deaf?: boolean }[] = []
   tiles.push({ key: 'me', user: me, stream: voice.camera, voice: voice.muted ? null : voice.mic, label: `${nameOf(me)} (você)`, muted: voice.muted || !voice.micOk, deaf: voice.deafened })
-  if (voice.screenStream) tiles.push({ key: 'me-screen', user: me, stream: voice.screenStream, label: 'Sua tela', screen: true })
+  if (voice.screenStream) tiles.push({ key: 'me-screen', user: me, stream: ownPreview ? voice.screenStream : null, label: 'Sua tela', screen: true, own: true })
   for (const r of voice.remotes) {
     const cam = r.info.video ? r.streams.find((s) => s.id === r.info.cameraStream) ?? null : null
     const scr = r.info.screen ? r.streams.find((s) => s.id === r.info.screenStream) ?? null : null
@@ -1250,11 +1253,37 @@ function Stage(props: { voice: VoiceSnapshot; me: User; title: string; media: Me
     if (scr) tiles.push({ key: r.info.socketId + '-screen', user: r.info.user, stream: scr, label: `Tela de ${nameOf(r.info.user)}`, screen: true })
   }
   // tela compartilhada ganha destaque sozinha, a menos que o usuário escolha outro foco
-  const focused = tiles.find((t) => t.key === focus) ?? tiles.find((t) => t.screen) ?? null
+  const focused = tiles.find((t) => t.key === focus) ?? tiles.find((t) => t.screen && !t.own) ?? tiles.find((t) => t.screen) ?? null
   const rest = focused ? tiles.filter((t) => t !== focused) : tiles
   const tile = (t: (typeof tiles)[number], big?: boolean) => (
-    <Tile key={t.key} big={big} voice={t.voice ?? null} onClick={() => setFocus(focus === t.key ? null : t.key)}>
-      {t.stream ? <StreamVideo stream={t.stream} contain={t.screen} /> : <Avatar user={t.user} />}
+    <Tile key={t.key} big={big} noFull={t.own} voice={t.voice ?? null} onClick={() => setFocus(focus === t.key ? null : t.key)}>
+      {t.own ? (
+        <>
+          {t.stream && <StreamVideo stream={t.stream} contain />}
+          <div className={`own-screen ${t.stream ? 'over' : ''}`}>
+            {!t.stream && (
+              <>
+                <Icon name="tela" size={big ? 44 : 26} />
+                {big && <strong>Você está compartilhando sua tela</strong>}
+              </>
+            )}
+            <button
+              className="chip"
+              title={ownPreview ? '' : 'Se esta janela estiver na tela compartilhada, a prévia mostra a tela dentro dela mesma'}
+              onClick={(e) => {
+                e.stopPropagation()
+                setOwnPreview(!ownPreview)
+              }}
+            >
+              {ownPreview ? 'Ocultar prévia' : 'Ver prévia'}
+            </button>
+          </div>
+        </>
+      ) : t.stream ? (
+        <StreamVideo stream={t.stream} contain={t.screen} />
+      ) : (
+        <Avatar user={t.user} />
+      )}
       <span className="tile-label">
         {t.label}
         {t.muted && <Icon name="mic" off size={14} />}
@@ -1311,7 +1340,7 @@ function useSpeaking(stream: MediaStream | null) {
   return speaking
 }
 
-function Tile(props: { big?: boolean; voice: MediaStream | null; onClick: () => void; children: ReactNode }) {
+function Tile(props: { big?: boolean; noFull?: boolean; voice: MediaStream | null; onClick: () => void; children: ReactNode }) {
   const speaking = useSpeaking(props.voice)
   const box = useRef<HTMLDivElement>(null)
   const [full, setFull] = useState(false)
@@ -1323,7 +1352,7 @@ function Tile(props: { big?: boolean; voice: MediaStream | null; onClick: () => 
   // tela cheia: botão no canto, duplo clique, ou Esc pra sair
   const toggleFull = () => {
     if (document.fullscreenElement) void document.exitFullscreen()
-    else void box.current?.requestFullscreen().catch(() => {})
+    else if (!props.noFull) void box.current?.requestFullscreen().catch(() => {})
   }
   return (
     <div
@@ -1333,18 +1362,20 @@ function Tile(props: { big?: boolean; voice: MediaStream | null; onClick: () => 
       onDoubleClick={toggleFull}
     >
       {props.children}
-      <button
-        className="tile-fs"
-        title={full ? 'Sair da tela cheia (Esc)' : 'Tela cheia (ou duplo clique)'}
-        aria-label={full ? 'Sair da tela cheia' : 'Tela cheia'}
-        onClick={(e) => {
-          e.stopPropagation()
-          toggleFull()
-        }}
-        onDoubleClick={(e) => e.stopPropagation()}
-      >
-        <Icon name={full ? 'reduzir' : 'cheia'} size={18} />
-      </button>
+      {!props.noFull && (
+        <button
+          className="tile-fs"
+          title={full ? 'Sair da tela cheia (Esc)' : 'Tela cheia (ou duplo clique)'}
+          aria-label={full ? 'Sair da tela cheia' : 'Tela cheia'}
+          onClick={(e) => {
+            e.stopPropagation()
+            toggleFull()
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          <Icon name={full ? 'reduzir' : 'cheia'} size={18} />
+        </button>
+      )}
     </div>
   )
 }

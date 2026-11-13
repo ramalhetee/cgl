@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const exe = process.env.TAVERNA_EXE || join(dirname(fileURLToPath(import.meta.url)), '..', 'release', 'Taverna-win32-x64', 'Taverna.exe')
+const exe = process.env.TAVERNA_EXE || join(dirname(fileURLToPath(import.meta.url)), '..', 'release', 'CGL-win32-x64', 'CGL.exe')
 const PORT = 3317
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const p = spawn(exe, ['--remote-debugging-port=9381', `--user-data-dir=${mkdtempSync(join(tmpdir(), 'taverna-test-'))}`], { env: { ...process.env, TAVERNA_PORT: String(PORT) }, stdio: 'ignore' })
@@ -18,7 +18,7 @@ const evaluate = (page, expression) => new Promise((resolve, reject) => {
   ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression, awaitPromise: true, returnByValue: true, userGesture: true } }))
   ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.id !== 1) return; clearTimeout(timer); ws.close(); m.result.exceptionDetails ? reject(new Error(m.result.exceptionDetails.exception?.description)) : resolve(m.result.result.value) }
 })
-const post = (path, body) => `fetch('${path}',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+(localStorage.getItem('taverna.token')||'')},body:JSON.stringify(${JSON.stringify(body)})}).then(r=>r.json())`
+const post = (path, body) => `fetch('${path}',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+(localStorage.getItem('cgl.token')||'')},body:JSON.stringify(${JSON.stringify(body)})}).then(r=>r.json())`
 const pickPhoto = (type) => `(async()=>{const c=document.createElement('canvas');c.width=400;c.height=200;const x=c.getContext('2d');x.fillStyle='#ff0000';x.fillRect(0,0,200,200);x.fillStyle='#0000ff';x.fillRect(200,0,200,200);const blob=await new Promise(r=>c.toBlob(r,'image/png'));const dt=new DataTransfer();dt.items.add(new File([blob],'foto','${type}'==='image/gif'?{type:'image/gif'}:{type:'image/png'}));const input=document.querySelector('.profile-edit input[type=file]');input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));return true})()`
 // lê a foto salva na prévia: tamanho e cor das bordas esquerda/direita
 const readAvatar = `(async()=>{const src=document.querySelector('.profile-head .avatar img')?.src;if(!src)return null;const i=new Image();i.src=src;await i.decode();const c=document.createElement('canvas');c.width=i.naturalWidth;c.height=i.naturalHeight;const x=c.getContext('2d');x.drawImage(i,0,0);const px=(u)=>{const d=x.getImageData(Math.floor(u*(c.width-1)),c.height>>1,1,1).data;return d[0]>200&&d[2]<60?'vermelho':d[2]>200&&d[0]<60?'azul':'outro'};return {tamanho:i.naturalWidth+'x'+i.naturalHeight,esquerda:px(0.03),direita:px(0.97),ext:src.split('.').pop()}})()`
@@ -31,7 +31,7 @@ try {
   void evaluate(await waitPage('launcher.html'), "document.getElementById('host').click()").catch(() => {})
   let host = await waitPage(`localhost:${PORT}`)
   await sleep(800)
-  await evaluate(host, post('/api/register', { username: 'recorte', password: 'teste-local-5' }) + ".then(j=>localStorage.setItem('taverna.token',j.token))")
+  await evaluate(host, post('/api/register', { username: 'recorte', password: 'teste-local-5' }) + ".then(j=>localStorage.setItem('cgl.token',j.token))")
   void evaluate(host, 'location.reload()').catch(() => {})
   await sleep(2500)
   host = await waitPage(`localhost:${PORT}`)

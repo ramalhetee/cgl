@@ -1,4 +1,4 @@
-// Taverna desktop.
+// CGL desktop.
 // - "Hospedar": sobe o servidor embutido neste PC (dados na pasta do usuário).
 // - "Entrar": abre uma ponte local (127.0.0.1) até o servidor de outra pessoa. A interface sempre
 //   roda em localhost, então microfone, câmera e tela funcionam sem HTTPS.
@@ -17,6 +17,32 @@ const BRIDGE_PORT = 32100
 const BUNDLE = path.join(__dirname, 'app') // gerado por scripts/build-desktop.mjs
 const PRELOAD = path.join(__dirname, 'preload.cjs')
 const BG = '#1b1613'
+
+// O app se chamava Taverna. Na primeira vez com o nome novo, traz contas, mensagens, fotos e login
+// da pasta antiga (%APPDATA%\\Taverna) para a nova. A antiga fica intacta.
+function migrateOldData() {
+  const forced = process.env.TAVERNA_OLD_DATA // só para teste: pasta antiga em outro lugar
+  if (!forced && process.argv.some((a) => a.startsWith('--user-data-dir'))) return
+  const now = app.getPath('userData')
+  const old = forced || path.join(app.getPath('appData'), 'Taverna')
+  if (path.resolve(now) === path.resolve(old)) return
+  if (fs.existsSync(path.join(now, 'dados')) || !fs.existsSync(path.join(old, 'dados'))) return
+  try {
+    fs.cpSync(path.join(old, 'dados'), path.join(now, 'dados'), { recursive: true }) // o essencial primeiro
+  } catch (e) {
+    console.error('migração dos dados falhou', e)
+    return
+  }
+  for (const name of fs.readdirSync(old)) {
+    if (name === 'dados' || name === 'lockfile' || name.startsWith('Singleton')) continue
+    try {
+      fs.cpSync(path.join(old, name), path.join(now, name), { recursive: true }) // login salvo, recentes
+    } catch {
+      // arquivo em uso ou ilegível: segue sem ele
+    }
+  }
+}
+migrateOldData()
 
 let launcher = null
 let room = null // janela conectada a um servidor
@@ -94,7 +120,7 @@ function lanAddresses() {
 async function reachable(url) {
   try {
     const r = await fetch(new URL('/api/me', url), { signal: AbortSignal.timeout(4000) })
-    return r.status === 401 || r.ok // 401 = é uma Taverna, só falta login
+    return r.status === 401 || r.ok // 401 = é um servidor CGL, só falta login
   } catch {
     return false
   }
@@ -102,10 +128,8 @@ async function reachable(url) {
 
 async function startHosting() {
   if (hosting) return
-  if (await reachable(`http://127.0.0.1:${HOST_PORT}`)) {
-    hosting = true // já tem uma Taverna rodando neste PC (ex.: npm start)
-    return
-  }
+  // Nunca adota um servidor que já esteja na porta: pode ser de outra versão e com outros dados.
+  // Se a porta estiver ocupada, o listen falha e o usuário vê o aviso de porta em uso.
   const data = path.join(app.getPath('userData'), 'dados')
   fs.mkdirSync(data, { recursive: true })
   process.env.TAVERNA_DATA = data
@@ -215,7 +239,7 @@ async function pickSource() {
 function openLauncher() {
   if (launcher) return launcher.focus()
   launcher = new BrowserWindow({
-    width: 560, height: 640, resizable: false, backgroundColor: BG, autoHideMenuBar: true, title: 'Taverna',
+    width: 560, height: 640, resizable: false, backgroundColor: BG, autoHideMenuBar: true, title: 'CGL',
     webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false, sandbox: true },
   })
   launcher.on('closed', () => (launcher = null))
@@ -228,7 +252,7 @@ async function openRoom(url, label, isHost) {
   const ses = secureSession(partition, origin)
   const win = new BrowserWindow({
     width: 1280, height: 800, minWidth: 760, minHeight: 500, show: false,
-    backgroundColor: BG, autoHideMenuBar: true, title: 'Taverna',
+    backgroundColor: BG, autoHideMenuBar: true, title: 'CGL',
     webPreferences: { session: ses, preload: PRELOAD, contextIsolation: true, nodeIntegration: false, sandbox: true },
   })
   win.webContents.setWindowOpenHandler(({ url: u }) => {
@@ -267,7 +291,7 @@ ipcMain.handle('launcher:host', async (e) => {
     await openRoom(`http://localhost:${HOST_PORT}`, 'host', true)
     return { ok: true }
   } catch (err) {
-    return { error: err.code === 'EADDRINUSE' ? `A porta ${HOST_PORT} já está em uso neste PC` : String(err.message || err) }
+    return { error: err.code === 'EADDRINUSE' ? `A porta ${HOST_PORT} já está em uso neste PC. Feche o outro programa que a usa (ou outro CGL aberto) e tente de novo` : String(err.message || err) }
   }
 })
 ipcMain.handle('launcher:connect', async (e, text) => {
@@ -279,7 +303,7 @@ ipcMain.handle('launcher:connect', async (e, text) => {
       if (i) await new Promise((r) => setTimeout(r, 2500))
       found = await reachable(target)
     }
-    if (!found) return { error: 'Não achei uma Taverna nesse endereço. Confira o endereço e se quem hospeda está com o app aberto.' }
+    if (!found) return { error: 'Não achei um servidor CGL nesse endereço. Confira o endereço e se quem hospeda está com o app aberto.' }
     bridge = await startBridge(target)
     addRecent(target.host)
     current = { label: target.host, hosting: false, remote: target.origin }
@@ -288,7 +312,7 @@ ipcMain.handle('launcher:connect', async (e, text) => {
   } catch (err) {
     bridge?.close()
     bridge = null
-    return { error: err.code === 'EADDRINUSE' ? 'A Taverna já está aberta em outra janela' : String(err.message || err) }
+    return { error: err.code === 'EADDRINUSE' ? 'O CGL já está aberto em outra janela' : String(err.message || err) }
   }
 })
 ipcMain.handle('room:info', (e) =>

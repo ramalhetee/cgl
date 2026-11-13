@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const exe = process.env.TAVERNA_EXE || join(dirname(fileURLToPath(import.meta.url)), '..', 'release', 'Taverna-win32-x64', 'Taverna.exe')
+const exe = process.env.TAVERNA_EXE || join(dirname(fileURLToPath(import.meta.url)), '..', 'release', 'CGL-win32-x64', 'CGL.exe')
 const PORT = 3315
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const p = spawn(exe, ['--remote-debugging-port=9361', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', `--user-data-dir=${mkdtempSync(join(tmpdir(), 'taverna-test-'))}`], { env: { ...process.env, TAVERNA_PORT: String(PORT) }, stdio: 'ignore' })
@@ -17,7 +17,7 @@ const evaluate = (page, expression) => new Promise((resolve, reject) => {
   ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression, awaitPromise: true, returnByValue: true, userGesture: true } }))
   ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.id !== 1) return; clearTimeout(timer); ws.close(); m.result.exceptionDetails ? reject(new Error(m.result.exceptionDetails.exception?.description)) : resolve(m.result.result.value) }
 })
-const post = (path, body) => `fetch('${path}',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+(localStorage.getItem('taverna.token')||'')},body:JSON.stringify(${JSON.stringify(body)})}).then(r=>r.json())`
+const post = (path, body) => `fetch('${path}',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+(localStorage.getItem('cgl.token')||'')},body:JSON.stringify(${JSON.stringify(body)})}).then(r=>r.json())`
 // observa por alguns segundos se o anel aparece e se some
 const watch = (ms) => `new Promise((res)=>{let on=0,off=0;const t=setInterval(()=>{document.querySelector('.occupant .avatar.talking')?on++:off++},60);setTimeout(()=>{clearInterval(t);res({on,off})},${ms})})`
 
@@ -25,7 +25,7 @@ try {
   void evaluate(await waitPage('launcher.html'), "document.getElementById('host').click()").catch(() => {})
   let host = await waitPage(`localhost:${PORT}`)
   await sleep(800)
-  await evaluate(host, post('/api/register', { username: 'falante', password: 'teste-local-8' }) + ".then(j=>localStorage.setItem('taverna.token',j.token))")
+  await evaluate(host, post('/api/register', { username: 'falante', password: 'teste-local-8' }) + ".then(j=>localStorage.setItem('cgl.token',j.token))")
   await evaluate(host, post('/api/guilds', { name: 'Mesa' }))
   void evaluate(host, 'location.reload()').catch(() => {})
   await sleep(2500)

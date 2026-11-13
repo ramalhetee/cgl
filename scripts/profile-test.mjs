@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const exe = process.env.TAVERNA_EXE || join(dirname(fileURLToPath(import.meta.url)), '..', 'release', 'Taverna-win32-x64', 'Taverna.exe')
+const exe = process.env.TAVERNA_EXE || join(dirname(fileURLToPath(import.meta.url)), '..', 'release', 'CGL-win32-x64', 'CGL.exe')
 const PORT = 3316
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const p = spawn(exe, ['--remote-debugging-port=9371', `--user-data-dir=${mkdtempSync(join(tmpdir(), 'taverna-test-'))}`], { env: { ...process.env, TAVERNA_PORT: String(PORT) }, stdio: 'ignore' })
@@ -17,7 +17,7 @@ const evaluate = (page, expression) => new Promise((resolve, reject) => {
   ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression, awaitPromise: true, returnByValue: true, userGesture: true } }))
   ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.id !== 1) return; clearTimeout(timer); ws.close(); m.result.exceptionDetails ? reject(new Error(m.result.exceptionDetails.exception?.description)) : resolve(m.result.result.value) }
 })
-const auth = "authorization:'Bearer '+(localStorage.getItem('taverna.token')||'')"
+const auth = "authorization:'Bearer '+(localStorage.getItem('cgl.token')||'')"
 const post = (path, body, method = 'POST') => `fetch('${path}',{method:'${method}',headers:{'content-type':'application/json',${auth}},body:JSON.stringify(${JSON.stringify(body)})}).then(async r=>({status:r.status,...(await r.json())}))`
 // digita num campo controlado pelo React
 const type = (sel, value) => `(()=>{const el=document.querySelector(${JSON.stringify(sel)});const proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(el,${JSON.stringify(value)});el.dispatchEvent(new Event('input',{bubbles:true}));return true})()`
@@ -28,7 +28,7 @@ try {
   void evaluate(await waitPage('launcher.html'), "document.getElementById('host').click()").catch(() => {})
   let host = await waitPage(`localhost:${PORT}`)
   await sleep(800)
-  await evaluate(host, post('/api/register', { username: 'perfil_teste', password: 'teste-local-6' }) + ".then(j=>localStorage.setItem('taverna.token',j.token))")
+  await evaluate(host, post('/api/register', { username: 'perfil_teste', password: 'teste-local-6' }) + ".then(j=>localStorage.setItem('cgl.token',j.token))")
   await evaluate(host, post('/api/guilds', { name: 'Mesa' }))
   void evaluate(host, 'location.reload()').catch(() => {})
   await sleep(2500)
@@ -42,6 +42,8 @@ try {
   await evaluate(host, type('.profile-edit textarea', 'Narradora das quintas.'))
   await evaluate(host, "document.querySelectorAll('.swatches button')[3].click()")
   await evaluate(host, pickPhoto)
+  await sleep(900)
+  await evaluate(host, "[...document.querySelectorAll('.crop .modal-actions button')].pop().click()") // confirma o recorte
   await sleep(1500)
   console.log('prévia com foto:', await evaluate(host, "!!document.querySelector('.profile-head .avatar img')"))
   await evaluate(host, "document.querySelector('.profile-edit button[type=submit]').click()")

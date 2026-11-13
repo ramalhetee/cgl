@@ -35,10 +35,15 @@ export type VoicePeer = {
   screenStream?: string | null
 }
 
-const TOKEN_KEY = 'taverna.token'
-export const getToken = () => localStorage.getItem(TOKEN_KEY)
+const TOKEN_KEY = 'cgl.token'
+const OLD_TOKEN_KEY = 'taverna.token' // nome antigo do app: mantém quem já estava logado
+export const getToken = () => localStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(OLD_TOKEN_KEY)
 export const setToken = (t: string | null) =>
-  t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY)
+{
+  localStorage.removeItem(OLD_TOKEN_KEY)
+  if (t) localStorage.setItem(TOKEN_KEY, t)
+  else localStorage.removeItem(TOKEN_KEY)
+}
 
 export async function api<T>(path: string, body?: unknown, method?: string): Promise<T> {
   const headers: Record<string, string> = {}

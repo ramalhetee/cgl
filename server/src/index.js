@@ -346,4 +346,4 @@ io.on('connection', (socket) => {
 });
 
 await app.listen({ port: PORT, host: HOST });
-console.log(`Taverna no ar: http://localhost:${PORT}`);
+console.log(`CGL no ar: http://localhost:${PORT}`);

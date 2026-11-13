@@ -215,3 +215,8 @@ button:active:not(:disabled) { transform: scale(.97); }
 .crop-zoom input { padding: 0; accent-color: var(--accent); }
 .modal.crop p { margin: 0; font-size: 13px; }
 .modal.crop .modal-actions { justify-self: stretch; }
+
+/* própria tela compartilhada: aviso no lugar da prévia */
+.own-screen { display: grid; gap: 10px; justify-items: center; text-align: center; padding: 12px; color: var(--muted); }
+.own-screen strong { color: var(--text); font-weight: 500; }
+.own-screen.over { position: absolute; top: 8px; right: 8px; padding: 0; z-index: 1; }

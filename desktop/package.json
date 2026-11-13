@@ -1,5 +1,6 @@
 {
-  "name": "taverna-desktop",
+  "name": "cgl-desktop",
+  "productName": "CGL",
   "private": true,
   "version": "0.1.0",
   "main": "main.cjs",

@@ -1,4 +1,4 @@
-# Taverna
+# CGL
 
 App de chat próprio: servidores, canais de texto, conversas diretas, presença, anexos, reações,
 salas de voz com câmera e compartilhamento de tela.
@@ -31,10 +31,10 @@ Desenvolvimento com recarga automática: `npm run dev:server` e `npm run dev:web
 ## Aplicativo (Windows)
 
 ```bash
-npm run pack       # gera release/Taverna-win32-x64/Taverna.exe
+npm run pack       # gera release/CGL-win32-x64/CGL.exe
 ```
 
-Ao abrir, o app pergunta: **Hospedar** (este PC vira o servidor, dados em `%APPDATA%\Taverna\dados`) ou
+Ao abrir, o app pergunta: **Hospedar** (este PC vira o servidor, dados em `%APPDATA%\CGL\dados`) ou
 **Entrar** (endereço de quem hospeda, ex.: `192.168.0.10:3210`). Quem entra usa uma ponte local, então
 microfone, câmera e tela funcionam sem HTTPS. O compartilhamento de tela usa um seletor próprio.
 
