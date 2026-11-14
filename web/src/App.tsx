@@ -13,21 +13,10 @@ import type { ThemeChoice, ThemeId } from './themes'
 import type { Cue } from './sounds'
 import type { VoiceSnapshot } from './voice'
 
-type DesktopInfo = { hosting: boolean; label: string; addresses: string[]; tunnel: string | null }
-const desktop = (window as unknown as {
-  taverna?: {
-    info: () => Promise<DesktopInfo | null>
-    leave: () => Promise<void>
-    setHotkeys?: (map: Hotkeys) => Promise<{ failed: string[] }>
-    updateState?: () => Promise<UpdateState | null>
-    updateApply?: () => Promise<boolean>
-    onUpdate?: (fn: (s: UpdateState) => void) => () => void
-    onHotkey?: (fn: (name: string) => void) => () => void
-    tunnelStart: () => Promise<{ url?: string; error?: string }>
-    tunnelStop: () => Promise<void>
-    onTunnelClosed: (fn: () => void) => void
-  }
-}).taverna
+import { desktop, ownTitleBar } from './desktop'
+import { DEFAULT_NOISE_MODE, NOISE_MODES, isNoiseMode, openMicrophone } from './noise'
+import type { Microphone, NoiseMode } from './noise'
+import type { DesktopInfo, Hotkeys, UpdateState } from './desktop'
 
 const ICONS = {
   mic: <><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></>,
@@ -38,6 +27,12 @@ const ICONS = {
   reduzir: <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />,
   som: <><path d="M4 9v6h4l5 4V5L8 9H4z" /><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" /></>,
   ajustes: <><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" /></>,
+  voltar: <path d="M15 18l-6-6 6-6" />,
+  avancar: <path d="M9 18l6-6-6-6" />,
+  seta: <path d="M6 9l6 6 6-6" />,
+  convidar: <><circle cx="9" cy="8" r="4" /><path d="M2 21a7 7 0 0 1 14 0M19 8v6M16 11h6" /></>,
+  membros: <><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6.5 6.5 0 0 1 3.5 6" /></>,
+  baixar: <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />,
   sair: <path d="M3 14c5-5.3 13-5.3 18 0l-2.4 2.6-3.6-2v-2.4c-2-.7-4-.7-6 0v2.4l-3.6 2z" fill="currentColor" stroke="none" />,
 }
 
@@ -51,9 +46,7 @@ function Icon({ name, off, size = 20 }: { name: keyof typeof ICONS; off?: boolea
   )
 }
 
-type UpdateState = { status: string; current: string; latest?: string; progress?: number; error?: string | null }
 type DeviceRef = { id: string; label: string }
-type Hotkeys = { mute?: string; deafen?: string }
 type AudioSettings = {
   input?: DeviceRef | null
   output?: DeviceRef | null
@@ -61,7 +54,9 @@ type AudioSettings = {
   sounds?: { enabled: boolean; volume: number }
   hotkeys?: Hotkeys
   theme?: ThemeChoice
+  noise?: NoiseMode
 }
+const noiseOf = (s: AudioSettings): NoiseMode => (isNoiseMode(s.noise) ? s.noise : DEFAULT_NOISE_MODE)
 const DEFAULT_HOTKEYS: Required<Hotkeys> = { mute: 'Ctrl+Shift+M', deafen: 'Ctrl+Shift+D' }
 const DEFAULT_SOUNDS = { enabled: true, volume: 50 }
 type VolMenu = { user: User; peer: VoicePeer | null; x: number; y: number }
@@ -133,7 +128,77 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [me, setMe] = useState<User | null>(null)
   const [guilds, setGuilds] = useState<Guild[]>([])
   const [dms, setDms] = useState<Dm[]>([])
-  const [sel, setSel] = useState<Sel>({ kind: 'dm', channelId: null })
+  const [sel, setSelRaw] = useState<Sel>({ kind: 'dm', channelId: null })
+  // histórico de navegação, como as setas do Discord (também Alt+←/→ e os botões laterais do mouse)
+  const selRef = useRef(sel)
+  const [nav, setNavState] = useState<{ back: Sel[]; fwd: Sel[] }>({ back: [], fwd: [] })
+  const navRef = useRef(nav)
+  const setNav = useCallback((n: { back: Sel[]; fwd: Sel[] }) => {
+    navRef.current = n
+    setNavState(n)
+  }, [])
+  const setSel = useCallback(
+    (next: Sel) => {
+      const cur = selRef.current
+      if (cur.kind === next.kind && cur.channelId === next.channelId && (cur.kind === 'dm' || next.kind === 'dm' || cur.guildId === next.guildId)) return
+      selRef.current = next
+      // a tela vazia do começo não entra no histórico
+      if (cur.channelId !== null || cur.kind === 'guild') setNav({ back: [...navRef.current.back.slice(-49), cur], fwd: [] })
+      setSelRaw(next)
+    },
+    [setNav],
+  )
+  const goBack = useCallback(() => {
+    const n = navRef.current
+    const prev = n.back.at(-1)
+    if (!prev) return
+    setNav({ back: n.back.slice(0, -1), fwd: [...n.fwd, selRef.current] })
+    selRef.current = prev
+    setSelRaw(prev)
+  }, [setNav])
+  const goForward = useCallback(() => {
+    const n = navRef.current
+    const next = n.fwd.at(-1)
+    if (!next) return
+    setNav({ back: [...n.back, selRef.current], fwd: n.fwd.slice(0, -1) })
+    selRef.current = next
+    setSelRaw(next)
+  }, [setNav])
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.shiftKey) return
+      if (e.key === 'ArrowLeft') goBack()
+      else if (e.key === 'ArrowRight') goForward()
+    }
+    const onMouse = (e: MouseEvent) => {
+      if (e.button === 3) goBack()
+      else if (e.button === 4) goForward()
+    }
+    addEventListener('keydown', onKey)
+    addEventListener('mouseup', onMouse)
+    return () => {
+      removeEventListener('keydown', onKey)
+      removeEventListener('mouseup', onMouse)
+    }
+  }, [goBack, goForward])
+  const [showPeople, setShowPeople] = useState(() => {
+    try {
+      return localStorage.getItem('cgl.members') !== '0'
+    } catch {
+      return true
+    }
+  })
+  const toggleMembers = () => {
+    setShowPeople((v) => {
+      try {
+        localStorage.setItem('cgl.members', v ? '0' : '1')
+      } catch {
+        // sem armazenamento: só não lembra
+      }
+      return !v
+    })
+  }
+  const [serverMenu, setServerMenu] = useState(false)
   const [messages, setMessages] = useState<Record<number, Message[]>>({})
   const [online, setOnline] = useState<Set<number>>(new Set())
   const [occupancy, setOccupancy] = useState<Record<number, VoicePeer[]>>({})
@@ -241,7 +306,12 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
         meRef.current = r.user
         setGuilds(r.guilds)
         setDms(r.dms)
-        if (r.guilds[0]) setSel({ kind: 'guild', guildId: r.guilds[0].id, channelId: r.guilds[0].channels[0]?.id ?? null })
+        if (r.guilds[0]) {
+          // primeira tela ao abrir: não entra no histórico de voltar/avançar
+          const first: Sel = { kind: 'guild', guildId: r.guilds[0].id, channelId: r.guilds[0].channels[0]?.id ?? null }
+          selRef.current = first
+          setSelRaw(first)
+        }
       })
       .catch(onLogout)
 
@@ -430,6 +500,12 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
     })
   }, [inputSaved])
 
+  // troca do filtro de ruído no meio da chamada
+  const noiseSaved = noiseOf(settings)
+  useEffect(() => {
+    void session.current?.setNoiseMode(noiseSaved)
+  }, [noiseSaved])
+
   // "digitando" some depois de 3 s
   useEffect(() => {
     const t = setInterval(() => {
@@ -483,7 +559,7 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
       leaveVoice()
       const devices = await navigator.mediaDevices.enumerateDevices().catch(() => [] as MediaDeviceInfo[])
       const inputId = resolveDevice(settingsRef.current.input, devices.filter((d) => d.kind === 'audioinput'))
-      const s = new VoiceSession(socket, channelId, setVoice, inputId)
+      const s = new VoiceSession(socket, channelId, setVoice, inputId, noiseOf(settingsRef.current))
       session.current = s
       try {
         await s.join()
@@ -494,6 +570,18 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
     },
     [socket, leaveVoice, flash],
   )
+
+  // cartão "AO VIVO" e assistir a transmissão de alguém (entra na sala se precisar e foca a tela)
+  const [live, setLive] = useState<LiveCardState | null>(null)
+  const [stageFocus, setStageFocus] = useState<{ key: string; n: number } | null>(null)
+  const watchStream = async (channelId: number, socketId: string) => {
+    setLive(null)
+    const g = guilds.find((x) => x.channels.some((c) => c.id === channelId))
+    setSel(g ? { kind: 'guild', guildId: g.id, channelId } : { kind: 'dm', channelId })
+    if (session.current?.channelId !== channelId) await joinVoice(channelId)
+    else if (voice?.notWatching.includes(socketId)) session.current?.setWatching(socketId, true)
+    setStageFocus((f) => ({ key: `${socketId}-screen`, n: (f?.n ?? 0) + 1 }))
+  }
 
   const media = (fn: (s: VoiceSession) => void | Promise<void>) => async () => {
     if (!session.current) return
@@ -570,8 +658,35 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
   const showStage = voice && ((channel?.type === 'voice' && voice.channelId === channel.id) || (dm && voice.channelId === dm.id))
   const dmUnread = dms.some((d) => unread.has(d.id))
 
+  const bar = ownTitleBar()
+  const barTitle = guild ? guild.name : dm ? nameOf(dm.user) : 'Conversas'
   return (
-    <div className="app">
+    <div className={`app ${bar ? 'with-bar' : ''}`}>
+      {bar && (
+        <TitleBar
+          title={barTitle}
+          icon={guild ? <span className="tb-icon">{guild.name.slice(0, 1).toUpperCase()}</span> : dm ? <Avatar user={dm.user} size={18} /> : <span className="tb-icon">@</span>}
+          canBack={nav.back.length > 0}
+          canForward={nav.fwd.length > 0}
+          onBack={goBack}
+          onForward={goForward}
+          theme={settings.theme}
+          update={
+            update?.status === 'ready' ? (
+              <button
+                className="tb-btn tb-update"
+                title={`Versão ${update.latest} pronta: clique para atualizar`}
+                onClick={() => {
+                  if (voice && !confirm('Atualizar agora fecha o CGL e tira você da chamada. Continuar?')) return
+                  void desktop?.updateApply?.()
+                }}
+              >
+                <Icon name="baixar" size={16} />
+              </button>
+            ) : null
+          }
+        />
+      )}
       <header className="topbar">
         <span className="brand">CGL</span>
         <nav className="tabs">
@@ -661,18 +776,70 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
       <aside className="side">
         {guild ? (
           <>
-            <div className="side-head">
-              <strong>{guild.name}</strong>
+            <div className="side-head server-head">
+              <button className={`server-name ${serverMenu ? 'open' : ''}`} onClick={() => setServerMenu((v) => !v)} aria-expanded={serverMenu}>
+                <strong>{guild.name}</strong>
+                <Icon name="seta" size={16} />
+              </button>
               <button
-                className="chip"
-                title="Copiar código de convite"
+                className="icon-btn"
+                title="Convidar pessoas (copia o código de convite)"
+                aria-label="Convidar pessoas"
                 onClick={() => {
                   void navigator.clipboard.writeText(guild.inviteCode)
                   flash(`Convite copiado: ${guild.inviteCode}`)
                 }}
               >
-                Convidar
+                <Icon name="convidar" size={18} />
               </button>
+              {serverMenu && (
+                <>
+                  <div className="menu-veil" onMouseDown={() => setServerMenu(false)} />
+                  <div className="server-menu" role="menu">
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        setServerMenu(false)
+                        void navigator.clipboard.writeText(guild.inviteCode)
+                        flash(`Convite copiado: ${guild.inviteCode}`)
+                      }}
+                    >
+                      Convidar pessoas <Icon name="convidar" size={16} />
+                    </button>
+                    {guild.ownerId === me.id && (
+                      <>
+                        <button
+                          role="menuitem"
+                          onClick={() => {
+                            setServerMenu(false)
+                            askNewChannel('text')
+                          }}
+                        >
+                          Criar canal de texto <span className="glyph">#</span>
+                        </button>
+                        <button
+                          role="menuitem"
+                          onClick={() => {
+                            setServerMenu(false)
+                            askNewChannel('voice')
+                          }}
+                        >
+                          Criar canal de voz <span className="glyph">♪</span>
+                        </button>
+                      </>
+                    )}
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        setServerMenu(false)
+                        toggleMembers()
+                      }}
+                    >
+                      {showPeople ? 'Ocultar membros' : 'Mostrar membros'} <Icon name="membros" size={16} />
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
             <Section title="Texto" onAdd={guild.ownerId === me.id ? () => askNewChannel('text') : undefined}>
               {guild.channels
@@ -706,8 +873,13 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
                     {(occupancy[c.id] ?? []).map((p) => (
                       <div
                         key={p.socketId}
-                        className={`occupant ${p.user.id !== me.id ? 'clicky-row' : ''}`}
-                        title={p.user.id !== me.id ? 'Clique com o botão direito para ajustar o volume' : undefined}
+                        className={`occupant ${p.user.id !== me.id || p.screen ? 'clicky-row' : ''}`}
+                        title={p.screen ? 'Ver a transmissão' : p.user.id !== me.id ? 'Clique com o botão direito para ajustar o volume' : undefined}
+                        onClick={(e) => {
+                          if (!p.screen) return
+                          const r = e.currentTarget.getBoundingClientRect()
+                          setLive({ peer: p, channelId: c.id, x: r.right + 10, y: r.top - 8 })
+                        }}
                         onContextMenu={(e) => {
                           if (p.user.id === me.id) return
                           e.preventDefault()
@@ -717,7 +889,7 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
                         <Avatar user={p.user} small talking={talking.has(p.socketId) && !p.muted} />
                         {nameOf(p.user)}
                         <span className="flags">
-                          {p.screen && <span title="Compartilhando a tela"><Icon name="tela" size={14} /></span>}
+                          {p.screen && <span className="live-badge" title="Transmitindo a tela">AO VIVO</span>}
                           {p.muted && <span title="Microfone mudo"><Icon name="mic" off size={14} /></span>}
                           {p.deaf && <span title="Sem ouvir"><Icon name="fone" off size={14} /></span>}
                           {p.user.id !== me.id && (settings.volumes?.[p.user.id]?.voice ?? 100) !== 100 && (
@@ -777,6 +949,7 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
             onSettings={() => setAudioOpen(true)}
             onVolume={(user, peer, x, y) => setVolMenu({ user, peer, x, y })}
             onWatch={(socketId, watching) => session.current?.setWatching(socketId, watching)}
+            focusRequest={stageFocus}
           />
         ) : channel?.type === 'voice' ? (
           <div className="empty">
@@ -800,6 +973,7 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
             onError={flash}
             onProfile={setCard}
             onCall={dm ? () => void joinVoice(dm.id) : undefined}
+            members={guild ? { open: showPeople, toggle: toggleMembers } : undefined}
           />
         ) : (
           <div className="empty">
@@ -809,7 +983,7 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
         )}
       </main>
 
-      {guild && (
+      {guild && showPeople && (
         <aside className="people">
           <h4>Membros — {members[guild.id]?.length ?? 0}</h4>
           {(members[guild.id] ?? [])
@@ -842,6 +1016,15 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
           onClose={() => setVolMenu(null)}
         />
       )}
+      {live && socket && (
+        <LiveCard
+          card={live}
+          isMe={live.peer.user.id === me.id}
+          socket={socket}
+          onWatch={() => void watchStream(live.channelId, live.peer.socketId)}
+          onClose={() => setLive(null)}
+        />
+      )}
       {ask && <AskModal ask={ask} onClose={() => setAsk(null)} />}
       {editProfile && (
         <ProfileEditor
@@ -871,6 +1054,109 @@ function Main({ token, onLogout }: { token: string; onLogout: () => void }) {
         />
       )}
       {notice && <div className="toast">{notice}</div>}
+    </div>
+  )
+}
+
+/**
+ * Barra de título própria (estilo Discord): voltar/avançar, nome do servidor ou conversa no centro.
+ * Os botões minimizar/maximizar/fechar são os do Windows, desenhados por cima da direita da barra.
+ */
+function TitleBar(props: {
+  title: string
+  icon: ReactNode
+  canBack: boolean
+  canForward: boolean
+  onBack: () => void
+  onForward: () => void
+  theme?: ThemeChoice
+  update: ReactNode
+}) {
+  // os botões do Windows acompanham as cores do tema
+  useEffect(() => {
+    const css = getComputedStyle(document.documentElement)
+    const bg = css.getPropertyValue('--bg').trim()
+    const text = css.getPropertyValue('--muted').trim()
+    if (/^#[0-9a-f]{6}$/i.test(bg) && /^#[0-9a-f]{6}$/i.test(text)) void desktop?.setTitleBarColors?.(bg, text)
+  }, [props.theme])
+  useEffect(() => {
+    document.title = `${props.title} — CGL`
+  }, [props.title])
+  return (
+    <div className="titlebar">
+      <div className="tb-left">
+        <span className="tb-brand">CGL</span>
+        <button className="tb-btn" disabled={!props.canBack} onClick={props.onBack} title="Voltar (Alt+←)" aria-label="Voltar">
+          <Icon name="voltar" size={16} />
+        </button>
+        <button className="tb-btn" disabled={!props.canForward} onClick={props.onForward} title="Avançar (Alt+→)" aria-label="Avançar">
+          <Icon name="avancar" size={16} />
+        </button>
+      </div>
+      <div className="tb-center">
+        {props.icon}
+        <span className="tb-title">{props.title}</span>
+      </div>
+      <div className="tb-right">{props.update}</div>
+    </div>
+  )
+}
+
+type LiveCardState = { peer: VoicePeer; channelId: number; x: number; y: number }
+
+/** Cartão de quem está transmitindo: prévia da tela (atualiza sozinha) e atalho para assistir. */
+function LiveCard(props: { card: LiveCardState; isMe: boolean; socket: Socket; onWatch: () => void; onClose: () => void }) {
+  const { peer } = props.card
+  const [img, setImg] = useState<string | null>(null)
+  useEffect(() => {
+    let alive = true
+    const load = () =>
+      void props.socket
+        .timeout(5000)
+        .emitWithAck('voice:preview:get', { socketId: peer.socketId })
+        .then((r: { data: string | null }) => alive && r.data && setImg(r.data))
+        .catch(() => {})
+    load()
+    const t = setInterval(load, 5000)
+    return () => {
+      alive = false
+      clearInterval(t)
+    }
+  }, [props.socket, peer.socketId])
+  const { onClose } = props
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    addEventListener('keydown', k)
+    return () => removeEventListener('keydown', k)
+  }, [onClose])
+  const top = Math.max(8, Math.min(props.card.y, innerHeight - 330))
+  const left = Math.min(props.card.x, innerWidth - 300)
+  return (
+    <div className="live-veil" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="live-card" style={{ left, top }} role="dialog" aria-label={`Transmissão de ${nameOf(peer.user)}`}>
+        <div className="live-card-head">
+          <Avatar user={peer.user} small />
+          <strong>{nameOf(peer.user)}</strong>
+        </div>
+        <div className="live-card-body">
+          <div className="live-card-row">
+            <span className="muted small">Transmitindo agora</span>
+            <span className="live-badge">AO VIVO</span>
+          </div>
+          <button className="live-preview" disabled={props.isMe} onClick={props.onWatch} title={props.isMe ? undefined : 'Assistir'}>
+            {img ? <img src={img} alt={`Prévia da tela de ${nameOf(peer.user)}`} /> : <span>A transmissão acabou de começar. Corre!</span>}
+            {!props.isMe && (
+              <span className="live-preview-hover">
+                <Icon name="tela" size={18} /> Assistir
+              </span>
+            )}
+          </button>
+          <button className={`live-watch ${props.isMe ? '' : 'primary'}`} disabled={props.isMe} onClick={props.onWatch}>
+            <Icon name="tela" size={16} />
+            {props.isMe ? 'Você está transmitindo!' : 'Assistir transmissão'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -1205,6 +1491,8 @@ function Chat(props: {
   onError: (m: string) => void
   onProfile: (u: User) => void
   onCall?: () => void
+  /** botão de mostrar/ocultar a lista de membros (só em servidor) */
+  members?: { open: boolean; toggle: () => void }
 }) {
   const { me, socket, channelId, messages } = props
   const [text, setText] = useState('')
@@ -1275,6 +1563,17 @@ function Chat(props: {
         {props.onCall && (
           <button className="chip" onClick={props.onCall}>
             Ligar
+          </button>
+        )}
+        {props.members && (
+          <button
+            className={`icon-btn head-end ${props.members.open ? 'on' : ''}`}
+            title={props.members.open ? 'Ocultar lista de membros' : 'Mostrar lista de membros'}
+            aria-label="Lista de membros"
+            aria-pressed={props.members.open}
+            onClick={props.members.toggle}
+          >
+            <Icon name="membros" size={20} />
           </button>
         )}
       </div>
@@ -1694,9 +1993,16 @@ function Stage(props: {
   onSettings: () => void
   onVolume: (user: User, peer: VoicePeer, x: number, y: number) => void
   onWatch: (socketId: string, watching: boolean) => void
+  /** pedido de foco vindo de fora (ex.: "Assistir transmissão" no cartão AO VIVO) */
+  focusRequest?: { key: string; n: number } | null
 }) {
   const { voice, me } = props
   const [focus, setFocus] = useState<string | null>(null)
+  const [seenRequest, setSeenRequest] = useState<number | undefined>(undefined)
+  if (props.focusRequest && props.focusRequest.n !== seenRequest) {
+    setSeenRequest(props.focusRequest.n)
+    setFocus(props.focusRequest.key)
+  }
   // A prévia da própria tela fica desligada por padrão: mostrar a tela dentro dela mesma cria um
   // espelho infinito, e cada volta pelo codificador de vídeo distorce mais as cores.
   const [ownPreview, setOwnPreview] = useState(false)
@@ -2183,40 +2489,56 @@ function AudioSettingsModal(props: {
     return () => navigator.mediaDevices.removeEventListener('devicechange', refresh)
   }, [refresh])
 
-  // medidor do microfone escolhido (também libera os nomes dos dispositivos)
+  // medidor do microfone escolhido, já com o filtro de ruído (também libera os nomes dos dispositivos)
+  const noise = noiseOf(props.settings)
+  const [mic, setMic] = useState<Microphone | null>(null)
+  const [hearSelf, setHearSelf] = useState(false)
   useEffect(() => {
-    let stream: MediaStream | null = null
+    let current: Microphone | null = null
     let timer: ReturnType<typeof setInterval> | undefined
     let ctx: AudioContext | null = null
     let stop = false
-    void navigator.mediaDevices
-      .getUserMedia({ audio: inputId ? { deviceId: { exact: inputId } } : true })
-      .then((st) => {
-        if (stop) return st.getTracks().forEach((t) => t.stop())
-        stream = st
-        setError('')
-        void refresh()
-        ctx = new AudioContext()
-        const an = ctx.createAnalyser()
-        an.fftSize = 512
-        ctx.createMediaStreamSource(st).connect(an)
-        const buf = new Uint8Array(an.fftSize)
-        timer = setInterval(() => {
-          an.getByteTimeDomainData(buf)
-          let peak = 0
-          for (const v of buf) peak = Math.max(peak, Math.abs(v - 128))
-          setLevel(Math.min(1, peak / 64))
-        }, 60)
-      })
-      .catch(() => setError('Não consegui abrir esse microfone.'))
+    void openMicrophone(inputId, noise).then((m) => {
+      if (stop) return m?.close()
+      if (!m) return setError('Não consegui abrir esse microfone.')
+      current = m
+      setMic(m)
+      setError('')
+      void refresh()
+      ctx = new AudioContext()
+      const an = ctx.createAnalyser()
+      an.fftSize = 512
+      ctx.createMediaStreamSource(m.stream).connect(an)
+      const buf = new Uint8Array(an.fftSize)
+      timer = setInterval(() => {
+        an.getByteTimeDomainData(buf)
+        let peak = 0
+        for (const v of buf) peak = Math.max(peak, Math.abs(v - 128))
+        setLevel(Math.min(1, peak / 64))
+      }, 60)
+    })
     return () => {
       stop = true
       clearInterval(timer)
-      stream?.getTracks().forEach((t) => t.stop())
+      current?.close()
       void ctx?.close()
+      setMic(null)
       setLevel(0)
     }
-  }, [inputId, refresh])
+  }, [inputId, noise, refresh])
+
+  // ouvir o próprio microfone (com fone), pra comparar os filtros
+  const selfAudio = useRef<HTMLAudioElement | null>(null)
+  useEffect(() => {
+    const el = selfAudio.current as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null
+    if (!el) return
+    el.srcObject = hearSelf && mic ? mic.stream : null
+    if (hearSelf && mic) {
+      if (el.setSinkId) void el.setSinkId(outputId).catch(() => {})
+      void el.play().catch(() => {})
+    }
+  }, [hearSelf, mic, outputId])
+  const [licenses, setLicenses] = useState<string | null>(null)
 
   const testOutput = async () => {
     setTesting(true)
@@ -2264,6 +2586,26 @@ function AudioSettingsModal(props: {
         </div>
         {error ? <p className="error">{error}</p> : <p className="muted small">Fale algo: a barra deve se mexer.</p>}
         <label>
+          Supressão de ruído
+          <select className="noise-select" value={noise} onChange={(e) => props.onChange({ noise: e.target.value as NoiseMode })}>
+            {NOISE_MODES.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="muted small noise-hint">
+          {mic && mic.mode !== noise
+            ? 'O filtro forte não funcionou neste aparelho: usando o padrão.'
+            : NOISE_MODES.find((m) => m.id === noise)?.hint}
+        </p>
+        <label className="check">
+          <input type="checkbox" checked={hearSelf} onChange={(e) => setHearSelf(e.target.checked)} />
+          Ouvir meu microfone (use fone, para comparar os filtros)
+        </label>
+        <audio ref={selfAudio} hidden />
+        <label>
           Saída de áudio
           <select value={outputId} onChange={(e) => pick('output', outputs, e.target.value)}>
             <option value="">Padrão do sistema</option>
@@ -2306,6 +2648,19 @@ function AudioSettingsModal(props: {
         <p className="muted small">
           Tudo aqui fica salvo na sua conta, junto com o volume de cada pessoa (clique com o botão direito em alguém na sala de voz).
         </p>
+        <details
+          className="licenses"
+          onToggle={(e) => {
+            if ((e.target as HTMLDetailsElement).open && licenses === null)
+              void fetch('/licencas.txt')
+                .then((r) => r.text())
+                .then(setLicenses)
+                .catch(() => setLicenses('Não consegui carregar as licenças.'))
+          }}
+        >
+          <summary className="muted small">Licenças de terceiros</summary>
+          <pre>{licenses ?? 'Carregando…'}</pre>
+        </details>
         <div className="modal-actions">
           <button className="primary" onClick={props.onClose}>
             Pronto

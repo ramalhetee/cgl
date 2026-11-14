@@ -77,7 +77,7 @@ try {
   await sleep(6000)
   console.log('convidado compartilhando, com som:', await evaluate(guest, "JSON.stringify({tela:!!document.querySelector('.own-screen'),botaoAtivo:document.querySelectorAll('.stage-bar .voice-buttons button')[3].classList.contains('on')})"))
   console.log('anfitrião recebe voz + som da tela:', await evaluate(host, gains))
-  console.log('estado que o anfitrião vê:', await evaluate(host, "JSON.stringify((()=>{const row=[...document.querySelectorAll('.occupant')].find(o=>o.textContent.includes('convidado'));return {iconeTela:!!row.querySelector('[title=\"Compartilhando a tela\"]')}})())"))
+  console.log('estado que o anfitrião vê:', await evaluate(host, "JSON.stringify((()=>{const row=[...document.querySelectorAll('.occupant')].find(o=>o.textContent.includes('convidado'));return {seloAoVivo:row.querySelector('.live-badge')?.textContent==='AO VIVO'}})())"))
 
   // não ouvir zera tudo; voltar restaura os volumes escolhidos
   await evaluate(host, "document.querySelectorAll('.stage-bar .voice-buttons button')[1].click()")
@@ -90,7 +90,7 @@ try {
   // dispositivos
   await evaluate(host, "document.querySelector('.icon-btn').click()")
   await sleep(1500)
-  console.log('ajustes de áudio:', await evaluate(host, "JSON.stringify({microfones:[...document.querySelectorAll('.audio-settings select')[0].options].map(o=>o.text),saidas:document.querySelectorAll('.audio-settings select')[1].options.length,medidor:document.querySelector('.meter i').style.width})"))
+  console.log('ajustes de áudio:', await evaluate(host, "JSON.stringify({microfones:[...document.querySelectorAll('.audio-settings select')[0].options].map(o=>o.text),saidas:document.querySelectorAll('.audio-settings select')[2].options.length,medidor:document.querySelector('.meter i').style.width})"))
   const before = await evaluate(host, "JSON.stringify(window.__trackBefore=null)")
   void before
   await evaluate(host, `(()=>{const sel=document.querySelectorAll('.audio-settings select')[0];const opt=[...sel.options].find(o=>o.value);if(!opt)return false;Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(sel,opt.value);sel.dispatchEvent(new Event('change',{bubbles:true}));return opt.text})()`)

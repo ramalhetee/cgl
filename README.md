@@ -44,7 +44,12 @@ Fora da mesma rede: quem hospeda clica em **Abrir pra internet**. O app sobe um 
 enquanto o app do anfitrião estiver aberto. Texto, anexos e sinalização passam pelo túnel; áudio, vídeo e
 tela continuam indo direto entre os participantes.
 
-Testes do app empacotado: `node scripts/app-test.mjs`, `node scripts/picker-test.mjs` e `node scripts/tunnel-test.mjs`.
+Testes:
+- Contrato do servidor (todas as rotas e eventos, sobe um servidor temporário): `npm test -w server`.
+- App empacotado: `node scripts/app-test.mjs`, `picker-test`, `tunnel-test`, `audio-test`, `noise-test` (supressão de ruído),
+  `live-titlebar-test` (AO VIVO e barra de título) e os demais `scripts/*-test.mjs`.
+- Medição de abertura e memória: `node scripts/bench.mjs` (resultados em `docs/medicoes.md`).
+- Planos de arquitetura: `docs/plano-cgl-leve.md` e `docs/plano-arquitetura.md`.
 
 ## Atualização automática
 

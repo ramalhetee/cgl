@@ -7,7 +7,10 @@
 <style>
   :root { --bg:#1b1613; --panel:#241d19; --raised:#30261f; --line:#3d3129; --text:#efe6dc; --muted:#a39384; --accent:#e0a43a; --danger:#d9624e; color-scheme: dark; font: 15px system-ui, 'Segoe UI', sans-serif; }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); padding: 28px; display: grid; gap: 18px; }
+  body { margin: 0; background: var(--bg); color: var(--text); padding: 60px 28px 28px; display: grid; gap: 18px; }
+  /* barra de título própria; minimizar e fechar são os botões do Windows, por cima da direita */
+  .bar { position: fixed; top: 0; left: 0; right: 0; height: 32px; display: flex; align-items: center; padding-left: 12px; color: var(--muted); font-size: 13px; user-select: none; -webkit-app-region: drag; }
+  .bar b { font-family: Georgia, serif; color: var(--accent); margin-right: 8px; }
   h1 { font: 700 34px Georgia, serif; color: var(--accent); margin: 0; letter-spacing: .5px; }
   p { margin: 0; color: var(--muted); line-height: 1.45; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; display: grid; gap: 12px; }
@@ -31,6 +34,7 @@
 </style>
 </head>
 <body>
+  <div class="bar"><b>CGL</b>Tela inicial</div>
   <div>
     <h1>CGL</h1>
     <p>Hospede sua própria mesa ou entre na de alguém.</p>

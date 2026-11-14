@@ -20,6 +20,8 @@ const BRIDGE_PORT = 32100
 const BUNDLE = path.join(__dirname, 'app') // gerado por scripts/build-desktop.mjs
 const PRELOAD = path.join(__dirname, 'preload.cjs')
 const BG = '#1b1613'
+const BAR_HEIGHT = 32 // barra de título própria; os botões do Windows ficam por cima, à direita
+const overlay = (color = BG, symbolColor = '#efe6dc') => ({ color, symbolColor, height: BAR_HEIGHT })
 
 // O app se chamava Taverna. Na primeira vez com o nome novo, traz contas, mensagens, fotos e login
 // da pasta antiga (%APPDATA%\\Taverna) para a nova. A antiga fica intacta.
@@ -242,20 +244,36 @@ async function pickSource() {
 function openLauncher() {
   if (launcher) return launcher.focus()
   launcher = new BrowserWindow({
-    width: 560, height: 640, resizable: false, backgroundColor: BG, autoHideMenuBar: true, title: 'CGL',
+    width: 560, height: 672, resizable: false, maximizable: false, backgroundColor: BG, autoHideMenuBar: true, title: 'CGL',
+    titleBarStyle: 'hidden', titleBarOverlay: overlay(), // barra própria + botões do Windows
     webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false, sandbox: true },
   })
   launcher.on('closed', () => (launcher = null))
   void launcher.loadFile(path.join(__dirname, 'launcher.html'))
 }
 
+/**
+ * A interface da mesa tem barra de título própria? Quem hospeda uma versão antiga serve a interface
+ * antiga, sem barra: nesse caso a janela mantém a barra do Windows (senão não daria pra arrastar).
+ */
+async function hasOwnTitleBar(url) {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(3000) })
+    return /<meta name="cgl-titlebar"/.test(await res.text())
+  } catch {
+    return false
+  }
+}
+
 async function openRoom(url, label, isHost) {
   const origin = new URL(url).origin
+  const ownBar = await hasOwnTitleBar(url)
   const partition = 'persist:' + createHash('sha1').update(label).digest('hex').slice(0, 16)
   const ses = secureSession(partition, origin)
   const win = new BrowserWindow({
     width: 1280, height: 800, minWidth: 760, minHeight: 500, show: false,
     backgroundColor: BG, autoHideMenuBar: true, title: 'CGL',
+    ...(ownBar ? { titleBarStyle: 'hidden', titleBarOverlay: overlay() } : {}), // barra própria (estilo Discord)
     webPreferences: { session: ses, preload: PRELOAD, contextIsolation: true, nodeIntegration: false, sandbox: true },
   })
   win.webContents.setWindowOpenHandler(({ url: u }) => {
@@ -297,6 +315,20 @@ ipcMain.handle('update:apply', (e) => (fromApp(e) ? updater.apply() : false))
 updater.onChange((st) => {
   for (const w of [launcher, room]) if (w && !w.isDestroyed()) w.webContents.send('update:state', st)
 })
+// ---------- barra de título própria ----------
+// a página pinta a barra com as cores do tema; os botões do Windows acompanham
+const HEX = /^#[0-9a-f]{6}$/i
+ipcMain.handle('win:colors', (e, color, symbol) => {
+  const w = fromApp(e) ? BrowserWindow.fromWebContents(e.sender) : null
+  if (!w || !HEX.test(color) || !HEX.test(symbol)) return false
+  try {
+    w.setTitleBarOverlay(overlay(color, symbol))
+    return true
+  } catch {
+    return false // janela com a barra do Windows (mesa de versão antiga)
+  }
+})
+
 ipcMain.handle('launcher:host', async (e) => {
   if (!fromLauncher(e)) return
   try {

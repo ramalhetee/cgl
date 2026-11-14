@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('taverna', {
     ipcRenderer.on('update:state', h)
     return () => ipcRenderer.removeListener('update:state', h)
   },
+  // barra de título própria
+  setTitleBarColors: (color, symbol) => ipcRenderer.invoke('win:colors', color, symbol),
   // seletor de tela
   sources: () => ipcRenderer.invoke('picker:sources'),
   choose: (id, audio) => ipcRenderer.invoke('picker:choose', id, audio),

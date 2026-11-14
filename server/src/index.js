@@ -129,6 +129,8 @@ app.put('/api/me/settings', { preHandler: auth }, async (req, reply) => {
       accent: typeof t.accent === 'string' && /^#[0-9a-f]{6}$/i.test(t.accent) ? t.accent.toLowerCase() : null,
     };
   }
+  // filtro de ruído do microfone (desligado, o do navegador ou RNNoise)
+  if ('noise' in b) out.noise = ['off', 'browser', 'rnnoise'].includes(b.noise) ? b.noise : 'browser';
   if ('volumes' in b) {
     if (!b.volumes || typeof b.volumes !== 'object') return fail(reply, 400, 'Volumes inválidos');
     out.volumes = {};
@@ -269,6 +271,10 @@ app.post('/api/upload', { preHandler: auth }, async (req, reply) => {
 const io = new Server(app.server, { maxHttpBufferSize: 1e6 });
 const online = new Map(); // userId -> Set<socketId>
 const voice = new Map(); // channelId -> Map<socketId, { user, muted, video, screen }>
+// miniatura mais recente de quem transmite a tela (só em memória; some quando a transmissão acaba)
+const previews = new Map(); // socketId -> data URL JPEG/WebP
+const PREVIEW_RE = /^data:image\/(jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+const MAX_PREVIEW = 300_000;
 
 function joinGuildRooms(userId, guildId) {
   for (const sid of online.get(userId) || []) io.sockets.sockets.get(sid)?.join(`guild:${guildId}`);
@@ -285,6 +291,7 @@ function leaveVoice(socket) {
   const channelId = socket.data.voiceChannel;
   if (!channelId) return;
   socket.data.voiceChannel = null;
+  previews.delete(socket.id);
   const room = voice.get(channelId);
   room?.delete(socket.id);
   if (room && room.size === 0) voice.delete(channelId);
@@ -401,9 +408,27 @@ io.on('connection', (socket) => {
     for (const k of ['cameraStream', 'screenStream']) {
       if (typeof patch[k] === 'string' || patch[k] === null) state[k] = patch[k]?.slice(0, 80) ?? null;
     }
+    if (!state.screen) previews.delete(socket.id);
     io.to(`voice:${channelId}`).emit('voice:state', { socketId: socket.id, ...state });
     const ch = d.getChannel(channelId);
     if (ch) emitToChannel(ch, 'voice:occupancy', { channelId, peers: voiceList(channelId) });
+  });
+
+  // prévia da transmissão: quem transmite manda uma miniatura de tempos em tempos; quem enxerga o
+  // canal pede quando abre o cartão "AO VIVO" (nada de imagem sendo empurrada pra todo mundo)
+  socket.on('voice:preview', ({ data } = {}) => {
+    const state = voice.get(socket.data.voiceChannel)?.get(socket.id);
+    if (!state?.screen || typeof data !== 'string' || data.length > MAX_PREVIEW || !PREVIEW_RE.test(data)) return;
+    previews.set(socket.id, data);
+  });
+
+  socket.on('voice:preview:get', ({ socketId } = {}, ack) => {
+    for (const [channelId, room] of voice) {
+      if (!room.has(socketId)) continue;
+      const ok = d.accessibleChannel(me.id, channelId);
+      return ack?.({ data: (ok && previews.get(socketId)) || null });
+    }
+    ack?.({ data: null });
   });
 
   socket.on('voice:speaking', ({ speaking } = {}) => {
